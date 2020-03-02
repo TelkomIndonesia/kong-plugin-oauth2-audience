@@ -1,0 +1,61 @@
+version: "3.4"
+services:
+  postgres:
+    image: postgres:10.1-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=kong
+      - POSTGRES_USER=kong
+  migrator:
+    build: .
+    image: rucciva/kong-plugin-oauth2-token-audience
+    restart: on-failure
+    depends_on: 
+      - postgres
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=postgres
+      - KONG_PG_DATABASE=kong
+    command: "kong migrations bootstrap && kong migrations up && kong migrations finish"
+  kong:
+    build: .
+    image: rucciva/kong-plugin-oauth2-token-audience
+    restart: unless-stopped
+    depends_on: 
+      - postgres
+      - migrator
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=postgres
+      - MOBDEBUG_SERVER=docker.for.mac.localhost
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+      - KONG_TRUSTED_IPS=0.0.0.0/0,::/0
+    ports:
+      - 8000:8000
+      - 8443:8443
+      - 8001:8001
+      - 8444:8444
+    volumes:
+      - ./volumes/kong/usr/local/share/lua/5.1:/usr/local/share/lua/5.1
+      - ./volumes/kong/prefix:/prefix
+  busted:
+    build: .
+    image: rucciva/kong-plugin-oauth2-token-audience
+    depends_on: 
+      - migrator
+      - postgres
+    environment:
+      - SPEC_KONG_DATABASE=postgres
+      - SPEC_KONG_PG_HOST=postgres
+      - SPEC_KONG_PG_DATABASE=kong
+      - SPEC_KONG_LOG_LEVEL=debug
+      - SPEC_KONG_DNS_RESOLVER=
+      - SPEC_KONG_PROXY_ACCESS_LOG=/proc/1/fd/1
+      - SPEC_KONG_PROXY_ERROR_LOG=/proc/1/fd/2
+      - SPEC_KONG_ADMIN_ACCESS_LOG=/proc/1/fd/2
+      - SPEC_KONG_ADMIN_ERROR_LOG=/proc/1/fd/2
+    volumes:
+      - ./kong/plugins/oauth2-token-audience:/usr/local/src/kong/kong/plugins/oauth2-token-audience
+      - ./spec/oauth2-token-audience:/usr/local/src/kong/spec/oauth2-token-audience
+    working_dir: /usr/local/src/kong/
+    command: bin/busted -v spec/oauth2-token-audience

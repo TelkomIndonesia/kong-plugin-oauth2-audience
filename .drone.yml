@@ -1,0 +1,126 @@
+---
+kind: secret
+name: sonar_url
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: sonar_url
+
+---
+kind: secret
+name: sonar_token
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: sonar_token
+
+---
+kind: secret
+name: elasticsearch_url
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: elasticsearch_url
+
+---
+kind: secret
+name: elasticsearch_username
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: elasticsearch_username
+
+---
+kind: secret
+name: elasticsearch_password
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: elasticsearch_password
+
+---
+kind: pipeline
+name: default
+
+workspace:
+  base: /drone
+  path: /src/git.rucciva.one/mainapi/kong-plugin-header
+
+services:
+  - name: postgres
+    image: postgres:10.1-alpine
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+
+steps:
+  - name: wait postgres
+    image: postgres:10.1-alpine
+    commands:
+      - until 
+          psql -h postgres -U kong -d kong  -c "select 1"; 
+        do 
+          sleep 1; 
+        done
+  
+  - name: migrate
+    image: kong:2.0.1-alpine
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: postgres
+      KONG_PG_DATABASE: kong
+    commands: 
+      - kong migrations bootstrap
+      - kong migrations up
+      - kong migrations finish
+    
+  - name: test
+    image: rucciva/kong-dev-onbuild:2.0.1
+    pull: true
+    environment:
+      SPEC_KONG_DATABASE: postgres
+      SPEC_KONG_PG_HOST: postgres
+      SPEC_KONG_PG_DATABASE: kong
+      SPEC_KONG_LOG_LEVEL: debug
+      SPEC_KONG_DNS_RESOLVER: 
+      SPEC_KONG_PROXY_ACCESS_LOG: /proc/1/fd/1
+      SPEC_KONG_PROXY_ERROR_LOG: /proc/1/fd/2
+      SPEC_KONG_ADMIN_ACCESS_LOG: /proc/1/fd/2
+      SPEC_KONG_ADMIN_ERROR_LOG: /proc/1/fd/2
+      SPEC_PROXY_TIMEOUT: 100000
+    commands:
+      - /entrypoint.sh echo
+      - ln -s $$DRONE_WORKSPACE/kong/plugins/oauth2-token-audience /usr/local/src/kong/kong/plugins/oauth2-token-audience
+      - ln -s $$DRONE_WORKSPACE/spec/oauth2-token-audience /usr/local/src/kong/spec/oauth2-token-audience
+      - luarocks make
+      - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-token-audience
+  
+  - name: analyze code using sonarqube
+    image: rucciva/drone-sonar-plugin:0.0.4
+    settings:
+      url:
+        from_secret: sonar_url
+      token:
+        from_secret: sonar_token
+      add_branch_prefix: "true"
+    when:
+      status:
+      - success
+      - failure
+
+  - name: publish build record
+    image: rucciva/drone-elasticsearch-plugin:0.0.2
+    pull: always
+    settings:
+      url:
+        from_secret: elasticsearch_url
+      username:
+        from_secret: elasticsearch_username
+      password:
+        from_secret: elasticsearch_password
+      index: drone    
+      index_postfix_command: date -d @`echo $DRONE_JOB_STARTED` +-%Y
+    when:
+      status:
+        - success
+        - failure
+---
+kind: signature
+hmac: af60cc0a20b41ddbae26f349479c91d2630e1ad70ec8fdfd3dbe1e46b82af5f6
+
+...
