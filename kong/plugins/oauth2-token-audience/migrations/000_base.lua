@@ -5,8 +5,8 @@ return {
           "id"           UUID                         PRIMARY KEY,
           "created_at"   TIMESTAMP WITH TIME ZONE     DEFAULT (CURRENT_TIMESTAMP(0) AT TIME ZONE 'UTC'),
           "consumer_id"  UUID                         REFERENCES "consumers" ("id") ON DELETE CASCADE,
-          "aud"          TEXT                         UNIQUE,
-          "iss"          TEXT,
+          "audience"     TEXT                         UNIQUE,
+          "issuer"       TEXT,
           "client_id"    TEXT,
           "tags"         TEXT[],
           "ttl"          TIMESTAMP WITH TIME ZONE
@@ -50,12 +50,12 @@ return {
           id          uuid PRIMARY KEY,
           created_at  timestamp,
           consumer_id uuid,
-          aud         text,
-          iss         text,
+          audience    text,
+          issuer      text,
           client_id   text,
           tags        set<text>
         );
-        CREATE INDEX IF NOT EXISTS ON oauth2_token_audiences(aud);
+        CREATE INDEX IF NOT EXISTS ON oauth2_token_audiences(audience);
         CREATE INDEX IF NOT EXISTS ON oauth2_token_audiences(consumer_id);
       ]]
     }

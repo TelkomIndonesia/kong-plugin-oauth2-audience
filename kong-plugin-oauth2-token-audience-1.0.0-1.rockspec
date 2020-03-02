@@ -31,5 +31,9 @@ build = {
   modules = {
     ["kong.plugins."..pluginName..".handler"] = "kong/plugins/"..pluginName.."/handler.lua",
     ["kong.plugins."..pluginName..".schema"] = "kong/plugins/"..pluginName.."/schema.lua",
+    ["kong.plugins."..pluginName..".access"] = "kong/plugins/"..pluginName.."/access.lua",
+    ["kong.plugins."..pluginName..".daos"] = "kong/plugins/"..pluginName.."/daos.lua",
+    ["kong.plugins."..pluginName..".migrations.init"] = "kong/plugins/"..pluginName.."/migrations/init.lua",
+    ["kong.plugins."..pluginName..".migrations.000_base"] = "kong/plugins/"..pluginName.."/migrations/000_base.lua",
   }
 }
