@@ -22,6 +22,8 @@ return {
                     {anonymous = {type = 'string', uuid = true, legacy = true}},
                     {run_on_preflight = {type = 'boolean', default = true}},
                     {auth_header_name = {type = 'string', default = 'authorization'}},
+                    {audience_prefix = {type = 'string', default = ''}},
+                    {required_scope = {type = 'array', elements = {type = 'string'}}},
                     {issuer = typedefs.url},
                     {jwt_signature_secret = {type = 'string'}},
                     {jwt_signature_public_key = typedefs.certificate},

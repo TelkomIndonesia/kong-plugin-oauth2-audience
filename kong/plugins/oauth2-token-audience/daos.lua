@@ -15,9 +15,9 @@ return {
             {consumer = {type = 'foreign', reference = 'consumers', required = true, on_delete = 'cascade'}},
             {tags = typedefs.tags},
             -- the ones that should be associated to the access token
-            {audience = {type = 'string', required = false, unique = true, auto = true}},
-            {issuer = {type = 'string', required = true}},
-            {client_id = {type = 'string', required = true}}
+            {audience = {type = 'string', required = false, unique = true, auto = true, match = '%S'}},
+            {issuer = {type = 'string', required = true, match = '%S'}},
+            {client_id = {type = 'string', required = true, match = '%S'}}
         }
     }
 }
