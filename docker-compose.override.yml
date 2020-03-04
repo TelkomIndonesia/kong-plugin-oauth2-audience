@@ -1,0 +1,108 @@
+version: "2.4"
+services:
+  hydra:
+    image: oryd/hydra:v1.3.2
+    command:
+      serve all --dangerous-force-http
+    environment:
+      - URLS_SELF_ISSUER=https://hydra.tld
+      - URLS_CONSENT=http://notexist.tld/consent
+      - URLS_LOGIN=http://notexist.tld/login
+      - URLS_LOGOUT=http://notexist.tld/logout
+      - DSN=memory
+      - SECRETS_SYSTEM=youReallyNeedToChangeThis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "hydra", "clients", "list", "--endpoint=http://0.0.0.0:4445" ]
+      start_period: 3s
+      timeout: 5s
+      retries: 3
+  
+  hydra_jwt:
+    image: oryd/hydra:v1.3.2
+    command:
+      serve all --dangerous-force-http
+    environment:
+      - URLS_SELF_ISSUER=https://hydra-jwt.tld
+      - URLS_CONSENT=http://notexist.tld/consent
+      - URLS_LOGIN=http://notexist.tld/login
+      - URLS_LOGOUT=http://notexist.tld/logout
+      - DSN=memory
+      - SECRETS_SYSTEM=youReallyNeedToChangeThis
+      - STRATEGIES_ACCESS_TOKEN=jwt
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "hydra", "clients", "list", "--endpoint=http://0.0.0.0:4445" ]
+      start_period: 3s
+      timeout: 5s
+      retries: 3
+  
+  caddy:
+    image: abiosoft/caddy:0.11.1
+    restart: unless-stopped
+    depends_on:
+      - hydra
+    environment:
+      CADDY_CONF: |
+        hydra.tld:443 {
+          tls self_signed
+          proxy / hydra:4444
+        }
+        admin.hydra.tld:443 {
+          tls self_signed
+          proxy / hydra:4445
+        }
+        hydra-jwt.tld:443 {
+          tls self_signed
+          proxy / hydra_jwt:4444
+        }
+        admin.hydra-jwt.tld:443 {
+          tls self_signed
+          proxy / hydra_jwt:4445
+        }
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CADDY_CONF" | caddy -conf stdin'
+    networks:
+      default:
+        aliases:
+          - hydra.tld
+          - admin.hydra.tld
+          - hydra-jwt.tld
+          - admin.hydra-jwt.tld
+  
+  oauth2_client:
+    image: appropriate/curl
+    restart: on-failure
+    depends_on:
+      hydra:
+        condition: service_healthy
+      hydra_jwt:
+        condition: service_healthy
+    environment:
+      CONTENT_TYPE: "content-type: application/json"
+      BODY: 
+        '{
+            "client_name": "$OAUTH2_CLIENT_ID",
+            "client_id": "$OAUTH2_CLIENT_ID",
+            "client_secret": "$OAUTH2_CLIENT_SECRET",
+            "scope": "$OAUTH2_CLIENT_SCOPE unrequired",
+            "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
+            "response_types": [ "token", "code", "id_token" ],
+            "redirect_uris": ["https://notexist.tld/callback"],
+            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "unknown"]
+        }'
+    entrypoint: [ /bin/sh , -c ] 
+    command: 
+      - for url in "http://hydra:4445" "http://hydra_jwt:4445"; do 
+          curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$BODY" ||
+          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$BODY";
+        done
+    
+  busted:
+    depends_on: 
+      caddy:
+        condition: service_started
+      oauth2_client:
+        condition: service_started
+    env_file:
+      - .env

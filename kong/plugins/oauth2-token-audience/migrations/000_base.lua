@@ -14,33 +14,34 @@ return {
 
         DO $$
         BEGIN
-          CREATE INDEX IF NOT EXISTS "oauth2_token_audience_consumer_id_idx" ON "oauth2_token_audiences" ("consumer_id");
+          CREATE INDEX IF NOT EXISTS "oauth2_token_audience_consumer_id_idx"
+            ON "oauth2_token_audiences" ("consumer_id");
         EXCEPTION WHEN UNDEFINED_COLUMN THEN
           -- Do nothing, accept existing state
         END$$;
 
         DO $$
         BEGIN
-            CREATE INDEX IF NOT EXISTS "oauth2_token_audience_tags_idex_tags_idx" ON "oauth2_token_audiences" USING GIN(tags);
+          CREATE INDEX IF NOT EXISTS "oauth2_token_audience_tags_idx" ON "oauth2_token_audiences" USING GIN(tags);
         EXCEPTION WHEN UNDEFINED_COLUMN THEN
-            -- Do nothing, accept existing state
+          -- Do nothing, accept existing state
         END$$;
 
         DO $$
         BEGIN
-            CREATE TRIGGER "oauth2_token_audience_sync_tags_trigger"
+          CREATE TRIGGER "oauth2_token_audience_sync_tags_trigger"
             AFTER INSERT OR UPDATE OF tags OR DELETE ON "oauth2_token_audiences"
             FOR EACH ROW
             EXECUTE PROCEDURE sync_tags();
         EXCEPTION WHEN UNDEFINED_COLUMN OR UNDEFINED_TABLE THEN
-            -- Do nothing, accept existing state
+          -- Do nothing, accept existing state
         END$$;
 
         DO $$
         BEGIN
-            CREATE INDEX IF NOT EXISTS "oauth2_token_audience_ttl_idx" ON "oauth2_token_audiences" (ttl);
+          CREATE INDEX IF NOT EXISTS "oauth2_token_audience_ttl_idx" ON "oauth2_token_audiences" (ttl);
         EXCEPTION WHEN UNDEFINED_TABLE THEN
-            -- Do nothing, accept existing state
+          -- Do nothing, accept existing state
         END$$;
       ]]
     },

@@ -49,7 +49,7 @@ local function get_access_token_from_header(conf)
     for v in value:gmatch('%S+') do
         table.insert(parts, v)
     end
-    if #parts ~= 2 and (parts[1]:lower() == 'token' or parts[1]:lower() == 'bearer') then
+    if #parts == 2 and (parts[1]:lower() == 'token' or parts[1]:lower() == 'bearer') then
         return parts[2]
     end
 end
@@ -93,10 +93,14 @@ local function fetch_oidc_conf(conf)
         return nil, 'no issuer specified'
     end
 
-    -- TODO: cache lookuo
     local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
-    local doc, err = openidc.get_discovery_doc({discovery = url})
-    -- TODO: cache doc if success for future use
+    local doc, err =
+        openidc.get_discovery_doc(
+        {
+            discovery = url,
+            ssl_verify = conf.ssl_verify or 'no'
+        }
+    )
 
     -- try our best to populate doc from conf so that resty.openidc do not try discovery again
     if err then
@@ -120,34 +124,32 @@ end
 -- https://github.com/zmartzone/lua-resty-openidc/blob/v1.7.2/lib/resty/openidc.lua#L1568
 -- but without access_token parsing
 local function introspect(access_token, opts)
-    -- TODO: cache lookuo
     local token_param_name = opts.introspection_token_param_name or 'token'
     local body = {}
     body[token_param_name] = access_token
     body.client_id = opts.client_id or body.client_id
     body.client_secret = opts.client_secret or body.client_secret
-    for key, val in pairs(opts.introspection_params) do
+    for key, val in pairs(opts.introspection_params or {}) do
         body[key] = val
     end
 
     local discovery = opts.discovery or {}
     local introspection_endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
     local json, err =
-        openidc.call_token_endpoint(
+        oidc.call_token_endpoint(
         opts,
         introspection_endpoint,
         body,
         opts.introspection_endpoint_auth_method,
         'introspection'
     )
-    -- TODO: cache
     return json, err
 end
 
 local function inquire(conf, access_token)
     local opts = {
         discovery = kong.cache:get(oidc_conf_cache_key(conf.issuer), nil, fetch_oidc_conf, conf),
-        ssl_verify = conf.ssl_verify,
+        ssl_verify = conf.ssl_verify or 'no',
         -- jwt specific
         symmetric_key = conf.jwt_signature_secret,
         public_key = conf.jwt_signature_public_key,
@@ -168,10 +170,10 @@ local function inquire(conf, access_token)
 
     local json, err = oidc.jwt_verify(access_token, opts)
     if err ~= nil and err:find('invalid jwt', 1, true) == 1 then
-        return kong.cache:get(introspect_cache_key(access_token), nil, introspect, opts)
+        return kong.cache:get(introspect_cache_key(access_token), nil, introspect, access_token, opts)
     end
     if err == nil and conf.jwt_introspection then
-        return kong.cache:get(introspect_cache_key(access_token), nil, introspect, opts)
+        return kong.cache:get(introspect_cache_key(access_token), nil, introspect, access_token, opts)
     end
     return json, err
 end
@@ -194,26 +196,26 @@ local function get_credential(conf, access_token_info)
     if type(access_token_info) ~= 'table' then
         return nil, ACCESS_TOKEN_INVALID
     end
-    local iss = access_token_info.issuer
+    local issuer = access_token_info.iss
     local client_id = access_token_info.client_id
 
     local auds = access_token_info.aud
     if type(auds) == 'string' then
         auds = {auds}
     end
-    local aud = ''
-    for _, v in ipairs(auds) do
-        if v:find(conf.audience_prefix, 1, true) == 1 then
-            aud = v:sub(v:len() + 1)
+    local audience = ''
+    for _, v in ipairs(auds or {}) do
+        if v:find(conf.audience_prefix or '', 1, true) == 1 then
+            audience = v:sub(v:len() + 1)
             break
         end
     end
-    if aud == '' then
+    if audience == '' then
         return nil, 'invalid audience'
     end
 
-    local key = kong.db.oauth2_token_audiences:cache_key(aud)
-    local credential, err = kong.cache:get(key, nil, load_credential, aud, iss, client_id)
+    local key = kong.db.oauth2_token_audiences:cache_key(audience)
+    local credential, err = kong.cache:get(key, nil, load_credential, audience, issuer, client_id)
     return credential, err
 end
 
@@ -268,15 +270,18 @@ local function authenticate(conf)
 
     local token_info, err = inquire(conf, token)
     if err ~= nil then
+        kong.log.err(err)
         return ACCESS_TOKEN_INVALID
     end
-    if token_info.issuer ~= conf.issuer then
+    if token_info.iss ~= conf.issuer then
+        kong.log.err('invalid issuer: ', token_info.iss, '. expected: ', conf.issuer)
         return ACCESS_TOKEN_INVALID
     end
 
     local cred
     cred, err = get_credential(conf, token_info)
     if err ~= nil then
+        kong.log.err(err)
         return CREDENTIAL_INVALID
     end
 
@@ -287,6 +292,7 @@ local function authenticate(conf)
     local cons
     cons, err = get_consumer(cred)
     if err ~= nil then
+        kong.log.err(err)
         return INTERNAL_SERVER_ERROR
     end
 
