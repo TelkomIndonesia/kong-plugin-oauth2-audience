@@ -1,6 +1,6 @@
 return {
-    postgres = {
-        up = [[
+  postgres = {
+    up = [[
         CREATE TABLE IF NOT EXISTS "oauth2_token_audiences" (
           "id"           UUID                         PRIMARY KEY,
           "created_at"   TIMESTAMP WITH TIME ZONE     DEFAULT (CURRENT_TIMESTAMP(0) AT TIME ZONE 'UTC'),
@@ -44,9 +44,9 @@ return {
           -- Do nothing, accept existing state
         END$$;
       ]]
-    },
-    cassandra = {
-        up = [[
+  },
+  cassandra = {
+    up = [[
         CREATE TABLE IF NOT EXISTS oauth2_token_audiences(
           id          uuid PRIMARY KEY,
           created_at  timestamp,
@@ -59,5 +59,5 @@ return {
         CREATE INDEX IF NOT EXISTS ON oauth2_token_audiences(audience);
         CREATE INDEX IF NOT EXISTS ON oauth2_token_audiences(consumer_id);
       ]]
-    }
+  }
 }

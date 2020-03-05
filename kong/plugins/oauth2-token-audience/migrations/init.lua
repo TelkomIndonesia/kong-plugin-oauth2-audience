@@ -1,3 +1,3 @@
 return {
-    '000_base'
+  '000_base'
 }

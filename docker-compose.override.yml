@@ -85,11 +85,11 @@ services:
             "client_name": "$OAUTH2_CLIENT_ID",
             "client_id": "$OAUTH2_CLIENT_ID",
             "client_secret": "$OAUTH2_CLIENT_SECRET",
-            "scope": "$OAUTH2_CLIENT_SCOPE unrequired",
+            "scope": "$OAUTH2_CLIENT_SCOPE $OAUTH2_CLIENT_SCOPE_UNREQUIRED",
             "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
             "response_types": [ "token", "code", "id_token" ],
             "redirect_uris": ["https://notexist.tld/callback"],
-            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "unknown"]
+            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED"]
         }'
     entrypoint: [ /bin/sh , -c ] 
     command: 
