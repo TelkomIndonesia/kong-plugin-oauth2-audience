@@ -2,7 +2,7 @@ local ngx = require('ngx')
 local oidc = require('resty.openidc')
 
 local _EMPTY = {}
-local OIDC_CONFIG_PATH = '/.well-known/openid-configuration'
+local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
 local ACCESS_TOKEN = 'access_token'
 local ACCESS_TOKEN_MISSING = {status = 400, headers = {['WWW-Authenticate'] = 'Bearer realm="service"'}}
 local ACCESS_TOKEN_INVALID = {
@@ -89,7 +89,6 @@ local function fetch_oidc_conf(conf)
 
   local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
   local doc, err = oidc.get_discovery_doc({discovery = url, ssl_verify = conf.ssl_verify or 'no'})
-
   -- try our best to populate doc from conf so that resty.openidc do not try discovery again
   if err then
     doc = {issuer = conf.issuer}
@@ -137,7 +136,7 @@ local function inquire(conf, access_token)
     -- jwt specific
     symmetric_key = conf.jwt_signature_secret,
     public_key = conf.jwt_signature_public_key,
-    token_signing_alg_values_expected = conf.jwt_introspection,
+    token_signing_alg_values_expected = conf.jwt_signature_algorithm,
     accept_none_alg = false,
     accept_unsupported_alg = false,
     -- introspection specific
@@ -210,9 +209,16 @@ end
 
 local function is_sufficient_scope(conf, access_token_info)
   local scope = {}
-  for v in access_token_info.scope:gmatch('%S+') do
-    scope[v] = true
+  if type(access_token_info.scope) == 'string' then
+    for v in access_token_info.scope:gmatch('%S+') do
+      scope[v] = true
+    end
+  elseif type(access_token_info.scp) == 'table' then
+    for _, v in ipairs(access_token_info.scp) do
+      scope[v] = true
+    end
   end
+
   for _, v in ipairs(conf.required_scope) do
     if scope[v] ~= true then
       return false
@@ -276,7 +282,6 @@ local function authenticate(conf)
   local cred
   cred, err = get_credential(conf, token_info)
   if err ~= nil then
-    kong.log.err(err)
     return CREDENTIAL_INVALID
   end
 

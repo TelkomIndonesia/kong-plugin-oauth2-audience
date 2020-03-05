@@ -42,8 +42,9 @@ services:
       - KONG_CASSANDRA_DATA_CENTERS=DC1:1
       - KONG_CASSANDRA_REPL_STRATEGY=NetworkTopologyStrategy
       - KONG_CASSANDRA_LOCAL_DATACENTER=DC1
-    entrypoint: /bin/bash -c
     command: 
+      - /bin/bash 
+      - -c 
       - KONG_DATABASE=postgres kong migrations bootstrap &&
         KONG_DATABASE=cassandra kong migrations bootstrap
 

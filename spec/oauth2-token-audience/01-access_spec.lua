@@ -49,7 +49,10 @@ local function get_audience_credential(is_jwt)
   }
 end
 
-local function get_token(is_jwt, scope, audience)
+local function get_token(is_jwt, id, secret, scope, audience)
+  id = id or os.getenv('OAUTH2_CLIENT_ID')
+  secret = secret or os.getenv('OAUTH2_CLIENT_SECRET')
+
   local httpc = http.new()
   local uri = os.getenv(is_jwt and 'IDP_JWT_TOKEN_ENDPOINT' or 'IDP_OPAQUE_TOKEN_ENDPOINT')
   local req = {
@@ -57,11 +60,10 @@ local function get_token(is_jwt, scope, audience)
     body = ngx.encode_args({
       grant_type = 'client_credentials',
       scope = scope or os.getenv('OAUTH2_CLIENT_SCOPE'),
-      audience = audience or os.getenv('OAUTH2_CLIENT_AUDIENCE_UNREGISTED')
+      audience = audience or os.getenv('OAUTH2_CLIENT_AUDIENCE')
     }),
     headers = {
-      ['Authorization'] = 'basic ' ..
-        ngx.encode_base64(os.getenv('OAUTH2_CLIENT_ID') .. ':' .. os.getenv('OAUTH2_CLIENT_SECRET')),
+      ['Authorization'] = 'basic ' .. ngx.encode_base64(id .. ':' .. secret),
       ['Content-Type'] = 'application/x-www-form-urlencoded'
     },
     ssl_verify = false
@@ -93,6 +95,9 @@ for _, strategy in helpers.each_strategy() do
         route = {id = route1.id},
         config = merge(get_plugin_config(), {issuer = get_plugin_config(true).issuer})
       })
+
+      local route2 = bp.routes:insert({hosts = {'oauth2-jwt.com'}})
+      bp.plugins:insert({name = plugin_name, route = {id = route2.id}, config = get_plugin_config(true)})
 
       local consumer = db.consumers:insert({username = "client"})
       db.oauth2_token_audiences:insert(merge(get_audience_credential(), {consumer = {id = consumer.id}}))
@@ -143,7 +148,7 @@ for _, strategy in helpers.each_strategy() do
 
     describe('when access token valid but unregistered audience', function()
       it('respond with 401', function()
-        local token, err = get_token()
+        local token, err = get_token(false, nil, nil, nil, os.getenv('OAUTH2_CLIENT_AUDIENCE_UNREGISTED'))
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -154,7 +159,7 @@ for _, strategy in helpers.each_strategy() do
 
     describe('when access token valid and credential match but scope inssuficient', function()
       it('respond with 403', function()
-        local token, err = get_token(false, os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED'), os.getenv("OAUTH2_CLIENT_AUDIENCE"))
+        local token, err = get_token(false, nil, nil, os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED'), nil)
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -163,16 +168,31 @@ for _, strategy in helpers.each_strategy() do
       end)
     end)
 
-    describe('when access token valid and credential match', function()
-      it('respond with 200', function()
-        local token, err = get_token(false, os.getenv("OAUTH2_CLIENT_SCOPE"), os.getenv("OAUTH2_CLIENT_AUDIENCE"))
+    describe('when access token valid and audience match but client_id not match', function()
+      it('respond with 401', function()
+        local token, err = get_token(false, os.getenv('OAUTH2_MALCLIENT_ID'), os.getenv('OAUTH2_MALCLIENT_SECRET'), nil, nil)
         assert.is_nil(err)
         assert.is_not_nil(token)
 
         local r = proxy_client:get('/request', {headers = {['Host'] = 'oauth2.com', ['Authorization'] = 'bearer ' .. token}})
-        assert.response(r).has.status(200)
+        assert.response(r).has.status(401)
       end)
     end)
+
+    for _, is_jwt in ipairs({false, true}) do
+      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid and credential match', function()
+        it('respond with 200', function()
+          local token, err = get_token(is_jwt)
+          assert.is_nil(err)
+          assert.is_not_nil(token)
+
+          local r = proxy_client:get('/request', {
+            headers = {['Host'] = is_jwt and 'oauth2-jwt.com' or 'oauth2.com', ['Authorization'] = 'bearer ' .. token}
+          })
+          assert.response(r).has.status(200)
+        end)
+      end)
+    end
 
   end)
 end
