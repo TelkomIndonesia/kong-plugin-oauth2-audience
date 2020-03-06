@@ -1,8 +1,8 @@
 local typedefs = require 'kong.db.schema.typedefs'
 
 return {
-  oauth2_token_audiences = {
-    name = 'oauth2_token_audiences',
+  oauth2_audiences = {
+    name = 'oauth2_audiences',
     primary_key = {'id'},
     endpoint_key = 'audience',
     cache_key = {'audience'},

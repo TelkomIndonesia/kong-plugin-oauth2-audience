@@ -75,7 +75,7 @@ local function get_access_token(conf)
 end
 
 local function oidc_conf_cache_key(issuer)
-  local prefix = 'oauth2_token_audience:oidc_conf:'
+  local prefix = 'oauth2_audience:oidc_conf:'
   if not issuer then
     return prefix
   end
@@ -98,7 +98,7 @@ local function fetch_oidc_conf(conf)
 end
 
 local function introspect_cache_key(issuer, access_token)
-  local prefix = 'oauth2_token_audience:access_token:'
+  local prefix = 'oauth2_audience:access_token:'
   if not access_token then
     return prefix
   end
@@ -162,7 +162,7 @@ local function inquire(conf, access_token)
 end
 
 local function load_credential(audience, issuer, client_id)
-  local credential, err = kong.db.oauth2_token_audiences:select_by_audience(audience)
+  local credential, err = kong.db.oauth2_audiences:select_by_audience(audience)
   if not credential then
     return nil, 'audience not found'
   end
@@ -192,7 +192,7 @@ local function get_credential(conf, access_token_info)
     return nil, 'invalid audience'
   end
 
-  local key = kong.db.oauth2_token_audiences:cache_key(audience)
+  local key = kong.db.oauth2_audiences:cache_key(audience)
   local credential, err = kong.cache:get(key, nil, load_credential, audience, issuer, client_id)
   if not credential then
     return credential, err

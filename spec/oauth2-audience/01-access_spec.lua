@@ -4,7 +4,7 @@ local ngx = require 'ngx'
 local cjson = require 'cjson'
 
 local helpers = require 'spec.helpers'
-local plugin_name = 'oauth2-token-audience'
+local plugin_name = 'oauth2-audience'
 local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
 
 local env = {
@@ -117,13 +117,13 @@ for _, strategy in helpers.each_strategy() do
       bp.plugins:insert({name = plugin_name, route = {id = route2.id}, config = get_plugin_config(true)})
 
       local consumer = db.consumers:insert({username = "client"})
-      db.oauth2_token_audiences:insert(merge(get_audience_credential(), {consumer = {id = consumer.id}}))
+      db.oauth2_audiences:insert(merge(get_audience_credential(), {consumer = {id = consumer.id}}))
 
       local jwt_consumer = db.consumers:insert({username = "jwt-client"})
-      db.oauth2_token_audiences:insert(merge(get_audience_credential(true), {consumer = {id = jwt_consumer.id}}))
+      db.oauth2_audiences:insert(merge(get_audience_credential(true), {consumer = {id = jwt_consumer.id}}))
 
       local consumer_inviss = db.consumers:insert({username = "client-inviss"})
-      db.oauth2_token_audiences:insert({
+      db.oauth2_audiences:insert({
         consumer = {id = consumer_inviss.id},
         audience = env.oauth2_client_audience_invalid_iss,
         issuer = "https://invalid.tld/",
@@ -131,7 +131,7 @@ for _, strategy in helpers.each_strategy() do
       })
 
       local consumer_invid = db.consumers:insert({username = "client-invid"})
-      db.oauth2_token_audiences:insert(merge(get_audience_credential(), {
+      db.oauth2_audiences:insert(merge(get_audience_credential(), {
         consumer = {id = consumer_invid.id},
         audience = env.oauth2_client_audience_invalid_client_id,
         issuer = env.idp_opaque_issuer,

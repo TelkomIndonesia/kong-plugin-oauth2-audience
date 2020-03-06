@@ -85,10 +85,10 @@ steps:
       SPEC_PROXY_TIMEOUT: 100000
     commands:
       - /entrypoint.sh echo
-      - ln -s $$DRONE_WORKSPACE/kong/plugins/oauth2-token-audience /usr/local/src/kong/kong/plugins/oauth2-token-audience
-      - ln -s $$DRONE_WORKSPACE/spec/oauth2-token-audience /usr/local/src/kong/spec/oauth2-token-audience
+      - ln -s $$DRONE_WORKSPACE/kong/plugins/oauth2-audience /usr/local/src/kong/kong/plugins/oauth2-audience
+      - ln -s $$DRONE_WORKSPACE/spec/oauth2-audience /usr/local/src/kong/spec/oauth2-audience
       - luarocks make
-      - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-token-audience
+      - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
   
   - name: analyze code using sonarqube
     image: rucciva/drone-sonar-plugin:0.0.4

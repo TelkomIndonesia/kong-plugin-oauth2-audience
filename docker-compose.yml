@@ -28,7 +28,7 @@ services:
 
   migrator:
     build: .
-    image: rucciva/kong-plugin-oauth2-token-audience
+    image: rucciva/kong-plugin-oauth2-audience
     restart: on-failure
     depends_on: 
       postgres:
@@ -50,7 +50,7 @@ services:
 
   kong:
     build: .
-    image: rucciva/kong-plugin-oauth2-token-audience
+    image: rucciva/kong-plugin-oauth2-audience
     restart: unless-stopped
     depends_on: 
       migrator:
@@ -71,7 +71,7 @@ services:
 
   busted:
     build: .
-    image: rucciva/kong-plugin-oauth2-token-audience
+    image: rucciva/kong-plugin-oauth2-audience
     depends_on: 
       migrator:
         condition: service_started
@@ -89,8 +89,8 @@ services:
       - SPEC_KONG_ADMIN_ACCESS_LOG=/proc/1/fd/1
       - SPEC_KONG_ADMIN_ERROR_LOG=/proc/1/fd/2
     volumes:
-      - ./kong/plugins/oauth2-token-audience:/usr/local/src/kong/kong/plugins/oauth2-token-audience
-      - ./spec/oauth2-token-audience:/usr/local/src/kong/spec/oauth2-token-audience
+      - ./kong/plugins/oauth2-audience:/usr/local/src/kong/kong/plugins/oauth2-audience
+      - ./spec/oauth2-audience:/usr/local/src/kong/spec/oauth2-audience
       # - ./volumes/busted/usr/local/src/kong/servroot:/usr/local/src/kong/servroot
     working_dir: /usr/local/src/kong/
-    command: bin/busted -v spec/oauth2-token-audience
+    command: bin/busted -v spec/oauth2-audience
