@@ -97,12 +97,12 @@ local function fetch_oidc_conf(conf)
   return doc
 end
 
-local function introspect_cache_key(access_token)
+local function introspect_cache_key(issuer, access_token)
   local prefix = 'oauth2_token_audience:access_token:'
   if not access_token then
     return prefix
   end
-  return prefix .. access_token
+  return prefix .. issuer .. access_token
 end
 
 -- based on:
@@ -155,7 +155,7 @@ local function inquire(conf, access_token)
 
   local json, err = oidc.jwt_verify(access_token, opts)
   if (err and err:find('invalid jwt', 1, true) == 1) or (not err and conf.jwt_introspection) then
-    return kong.cache:get(introspect_cache_key(access_token), nil, introspect, opts, access_token)
+    return kong.cache:get(introspect_cache_key(conf.issuer, access_token), nil, introspect, opts, access_token)
   end
 
   return json, err
@@ -166,25 +166,16 @@ local function load_credential(audience, issuer, client_id)
   if not credential then
     return nil, 'audience not found'
   end
-  if err then
-    return nil, err
-  end
-  if issuer ~= credential.issuer then
-    return nil, 'invalid issuer'
-  end
-  if client_id ~= credential.client_id then
-    return nil, 'invalid client_id'
-  end
-  return credential
+  return credential, err
 end
 
 local function get_credential(conf, access_token_info)
   if type(access_token_info) ~= 'table' then
     return nil, ACCESS_TOKEN_INVALID
   end
+
   local issuer = access_token_info.iss
   local client_id = access_token_info.client_id
-
   local auds = access_token_info.aud
   if type(auds) == 'string' then
     auds = {auds}
@@ -197,14 +188,22 @@ local function get_credential(conf, access_token_info)
       break
     end
   end
-
   if audience == '' then
     return nil, 'invalid audience'
   end
 
   local key = kong.db.oauth2_token_audiences:cache_key(audience)
   local credential, err = kong.cache:get(key, nil, load_credential, audience, issuer, client_id)
-  return credential, err
+  if not credential then
+    return credential, err
+  end
+  if issuer ~= credential.issuer then
+    return nil, 'invalid issuer'
+  end
+  if client_id ~= credential.client_id then
+    return nil, 'invalid client_id'
+  end
+  return credential
 end
 
 local function is_sufficient_scope(conf, access_token_info)

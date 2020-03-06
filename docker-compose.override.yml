@@ -89,7 +89,7 @@ services:
             "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
             "response_types": [ "token", "code", "id_token" ],
             "redirect_uris": ["https://notexist.tld/callback"],
-            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED"]
+            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE",  "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
         }'
       MALCLIENT: 
         '{
@@ -100,19 +100,47 @@ services:
             "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
             "response_types": [ "token", "code", "id_token" ],
             "redirect_uris": ["https://notexist.tld/callback"],
-            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED"]
+            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE"]
+        }'
+      CLIENT_JWT: 
+        '{
+            "client_name": "$OAUTH2_CLIENT_ID",
+            "client_id": "$OAUTH2_CLIENT_ID",
+            "client_secret": "$OAUTH2_CLIENT_SECRET",
+            "scope": "$OAUTH2_CLIENT_SCOPE $OAUTH2_CLIENT_SCOPE_UNREQUIRED",
+            "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
+            "response_types": [ "token", "code", "id_token" ],
+            "redirect_uris": ["https://notexist.tld/callback"],
+            "audience": ["$OAUTH2_JWT_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_JWT_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
+        }'
+      MALCLIENT_JWT: 
+        '{
+            "client_name": "$OAUTH2_MALCLIENT_ID",
+            "client_id": "$OAUTH2_MALCLIENT_ID",
+            "client_secret": "$OAUTH2_MALCLIENT_SECRET",
+            "scope": "$OAUTH2_CLIENT_SCOPE $OAUTH2_CLIENT_SCOPE_UNREQUIRED",
+            "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
+            "response_types": [ "token", "code", "id_token" ],
+            "redirect_uris": ["https://notexist.tld/callback"],
+            "audience": ["$OAUTH2_JWT_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_JWT_CLIENT_AUDIENCE"]
         }'
     entrypoint: [ /bin/sh , -c ] 
     command: 
       - |-
         set -euo pipefail
-        for url in "http://hydra:4445" "http://hydra_jwt:4445"; do 
-          curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT" ||\
-            curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT"
-
-          curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$MALCLIENT" ||\
-            curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/malclient" -d "$$MALCLIENT"
-        done
+        
+        url="http://hydra:4445"
+        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT" ||\
+          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT"
+        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$MALCLIENT" ||\
+          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/malclient" -d "$$MALCLIENT"
+        
+        url="http://hydra_jwt:4445"
+        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT_JWT" ||\
+          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT_JWT"
+        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$MALCLIENT_JWT" ||\
+          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/malclient" -d "$$MALCLIENT_JWT"
+        
     
   busted:
     depends_on: 

@@ -7,10 +7,29 @@ local helpers = require 'spec.helpers'
 local plugin_name = 'oauth2-token-audience'
 local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
 
+local env = {
+  idp_opaque_issuer = os.getenv('IDP_OPAQUE_ISSUER'),
+  idp_opaque_introspection_endpoint = os.getenv('IDP_OPAQUE_INTROSPECTION_ENDPOINT'),
+  idp_opaque_token_endpoint = os.getenv('IDP_OPAQUE_TOKEN_ENDPOINT'),
+  idp_jwt_issuer = os.getenv('IDP_JWT_ISSUER'),
+  idp_jwt_introspection_endpoint = os.getenv('IDP_JWT_INTROSPECTION_ENDPOINT'),
+  idp_jwt_token_endpoint = os.getenv('IDP_JWT_TOKEN_ENDPOINT'),
+  idp_kong_audience_prefix = os.getenv('IDP_KONG_AUDIENCE_PREFIX'),
+  oauth2_client_id = os.getenv('OAUTH2_CLIENT_ID'),
+  oauth2_client_secret = os.getenv('OAUTH2_CLIENT_SECRET'),
+  oauth2_client_audience = os.getenv('OAUTH2_CLIENT_AUDIENCE'),
+  oauth2_jwt_client_audience = os.getenv('OAUTH2_JWT_CLIENT_AUDIENCE'),
+  oauth2_client_scope = os.getenv('OAUTH2_CLIENT_SCOPE'),
+  oauth2_client_audience_unregisted = os.getenv('OAUTH2_CLIENT_AUDIENCE_UNREGISTED'),
+  oauth2_client_audience_invalid_iss = os.getenv('OAUTH2_CLIENT_AUDIENCE_INVALID_ISS'),
+  oauth2_client_audience_invalid_client_id = os.getenv('OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID'),
+  oauth2_client_scope_unrequired = os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED'),
+  oauth2_malclient_id = os.getenv('OAUTH2_MALCLIENT_ID'),
+  oauth2_malclient_secret = os.getenv('OAUTH2_MALCLIENT_SECRET')
+}
+
 local function split(inputstr, sep)
-  if sep == nil then
-    sep = '%s'
-  end
+  sep = sep or '%s'
   local t = {}
   for str in string.gmatch(inputstr, '([^' .. sep .. ']+)') do
     table.insert(t, str)
@@ -31,11 +50,11 @@ end
 
 local function get_plugin_config(is_jwt)
   local conf = {
-    required_scope = split(os.getenv('OAUTH2_CLIENT_SCOPE'), ' '),
-    issuer = os.getenv(is_jwt and 'IDP_JWT_ISSUER' or 'IDP_OPAQUE_ISSUER'),
-    introspection_endpoint = os.getenv(is_jwt and 'IDP_JWT_INTROSPECTION_ENDPOINT' or 'IDP_OPAQUE_INTROSPECTION_ENDPOINT'),
-    introspection_client_id = os.getenv('OAUTH2_CLIENT_ID'),
-    introspection_client_secret = os.getenv('OAUTH2_CLIENT_SECRET'),
+    required_scope = split(env.oauth2_client_scope, ' '),
+    issuer = is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer,
+    introspection_endpoint = is_jwt and env.idp_jwt_introspection_endpoint or env.idp_opaque_introspection_endpoint,
+    introspection_client_id = env.oauth2_client_id,
+    introspection_client_secret = env.oauth2_client_secret,
     ssl_verify = false
   }
   return conf
@@ -43,24 +62,24 @@ end
 
 local function get_audience_credential(is_jwt)
   return {
-    audience = os.getenv("OAUTH2_CLIENT_AUDIENCE"),
-    issuer = os.getenv(is_jwt and 'IDP_JWT_ISSUER' or 'IDP_OPAQUE_ISSUER'),
-    client_id = os.getenv("OAUTH2_CLIENT_ID")
+    audience = is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience,
+    issuer = is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer,
+    client_id = env.oauth2_client_id
   }
 end
 
-local function get_token(is_jwt, id, secret, scope, audience)
-  id = id or os.getenv('OAUTH2_CLIENT_ID')
-  secret = secret or os.getenv('OAUTH2_CLIENT_SECRET')
+local function fetch_token(is_jwt, id, secret, scope, audience)
+  id = id or env.oauth2_client_id
+  secret = secret or env.oauth2_client_secret
 
   local httpc = http.new()
-  local uri = os.getenv(is_jwt and 'IDP_JWT_TOKEN_ENDPOINT' or 'IDP_OPAQUE_TOKEN_ENDPOINT')
+  local uri = is_jwt and env.idp_jwt_token_endpoint or env.idp_opaque_token_endpoint
   local req = {
     method = 'POST',
     body = ngx.encode_args({
       grant_type = 'client_credentials',
-      scope = scope or os.getenv('OAUTH2_CLIENT_SCOPE'),
-      audience = audience or os.getenv('OAUTH2_CLIENT_AUDIENCE')
+      scope = scope or env.oauth2_client_scope,
+      audience = audience or (is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)
     }),
     headers = {
       ['Authorization'] = 'basic ' .. ngx.encode_base64(id .. ':' .. secret),
@@ -102,6 +121,25 @@ for _, strategy in helpers.each_strategy() do
       local consumer = db.consumers:insert({username = "client"})
       db.oauth2_token_audiences:insert(merge(get_audience_credential(), {consumer = {id = consumer.id}}))
 
+      local jwt_consumer = db.consumers:insert({username = "jwt-client"})
+      db.oauth2_token_audiences:insert(merge(get_audience_credential(true), {consumer = {id = jwt_consumer.id}}))
+
+      local consumer_inviss = db.consumers:insert({username = "client-inviss"})
+      db.oauth2_token_audiences:insert({
+        consumer = {id = consumer_inviss.id},
+        audience = env.oauth2_client_audience_invalid_iss,
+        issuer = "https://invalid.tld/",
+        client_id = env.oauth2_client_id
+      })
+
+      local consumer_invid = db.consumers:insert({username = "client-invid"})
+      db.oauth2_token_audiences:insert(merge(get_audience_credential(), {
+        consumer = {id = consumer_invid.id},
+        audience = env.oauth2_client_audience_invalid_client_id,
+        issuer = env.idp_opaque_issuer,
+        client_id = 'invalid'
+      }))
+
       assert(helpers.start_kong({database = strategy, plugins = 'bundled,' .. plugin_name, nginx_conf = spec_nginx_conf}))
     end)
 
@@ -133,9 +171,9 @@ for _, strategy in helpers.each_strategy() do
       end)
     end)
 
-    describe('when access token valid but configured issuer did not match', function()
+    describe('when access token valid but plugin\'s issuer did not match', function()
       it('respond with 401', function()
-        local token, err = get_token()
+        local token, err = fetch_token()
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -148,7 +186,7 @@ for _, strategy in helpers.each_strategy() do
 
     describe('when access token valid but unregistered audience', function()
       it('respond with 401', function()
-        local token, err = get_token(false, nil, nil, nil, os.getenv('OAUTH2_CLIENT_AUDIENCE_UNREGISTED'))
+        local token, err = fetch_token(false, nil, nil, nil, env.oauth2_client_audience_unregisted)
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -157,9 +195,31 @@ for _, strategy in helpers.each_strategy() do
       end)
     end)
 
-    describe('when access token valid and credential match but scope inssuficient', function()
+    describe('when access token valid but client_id did not match', function()
+      it('respond with 401', function()
+        local token, err = fetch_token(false, nil, nil, nil, env.oauth2_client_audience_invalid_client_id)
+        assert.is_nil(err)
+        assert.is_not_nil(token)
+
+        local r = proxy_client:get('/request', {headers = {['Host'] = 'oauth2.com', ['Authorization'] = 'bearer ' .. token}})
+        assert.response(r).has.status(401)
+      end)
+    end)
+
+    describe('when access token valid but issuer did not match', function()
+      it('respond with 401', function()
+        local token, err = fetch_token(false, nil, nil, nil, env.oauth2_client_audience_invalid_iss)
+        assert.is_nil(err)
+        assert.is_not_nil(token)
+
+        local r = proxy_client:get('/request', {headers = {['Host'] = 'oauth2.com', ['Authorization'] = 'bearer ' .. token}})
+        assert.response(r).has.status(401)
+      end)
+    end)
+
+    describe('when access token valid and credential match but scope insuficient', function()
       it('respond with 403', function()
-        local token, err = get_token(false, nil, nil, os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED'), nil)
+        local token, err = fetch_token(false, nil, nil, env.oauth2_client_scope_unrequired, nil)
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -170,7 +230,7 @@ for _, strategy in helpers.each_strategy() do
 
     describe('when access token valid and audience match but client_id not match', function()
       it('respond with 401', function()
-        local token, err = get_token(false, os.getenv('OAUTH2_MALCLIENT_ID'), os.getenv('OAUTH2_MALCLIENT_SECRET'), nil, nil)
+        local token, err = fetch_token(false, env.oauth2_malclient_id, env.oauth2_malclient_secret, nil, nil)
         assert.is_nil(err)
         assert.is_not_nil(token)
 
@@ -182,7 +242,7 @@ for _, strategy in helpers.each_strategy() do
     for _, is_jwt in ipairs({false, true}) do
       describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid and credential match', function()
         it('respond with 200', function()
-          local token, err = get_token(is_jwt)
+          local token, err = fetch_token(is_jwt)
           assert.is_nil(err)
           assert.is_not_nil(token)
 
