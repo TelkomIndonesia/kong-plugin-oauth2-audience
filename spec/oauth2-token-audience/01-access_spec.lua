@@ -23,9 +23,7 @@ local env = {
   oauth2_client_audience_unregisted = os.getenv('OAUTH2_CLIENT_AUDIENCE_UNREGISTED'),
   oauth2_client_audience_invalid_iss = os.getenv('OAUTH2_CLIENT_AUDIENCE_INVALID_ISS'),
   oauth2_client_audience_invalid_client_id = os.getenv('OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID'),
-  oauth2_client_scope_unrequired = os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED'),
-  oauth2_malclient_id = os.getenv('OAUTH2_MALCLIENT_ID'),
-  oauth2_malclient_secret = os.getenv('OAUTH2_MALCLIENT_SECRET')
+  oauth2_client_scope_unrequired = os.getenv('OAUTH2_CLIENT_SCOPE_UNREQUIRED')
 }
 
 local function split(inputstr, sep)
@@ -225,17 +223,6 @@ for _, strategy in helpers.each_strategy() do
 
         local r = proxy_client:get('/request', {headers = {['Host'] = 'oauth2.com', ['Authorization'] = 'bearer ' .. token}})
         assert.response(r).has.status(403)
-      end)
-    end)
-
-    describe('when access token valid and audience match but client_id not match', function()
-      it('respond with 401', function()
-        local token, err = fetch_token(false, env.oauth2_malclient_id, env.oauth2_malclient_secret, nil, nil)
-        assert.is_nil(err)
-        assert.is_not_nil(token)
-
-        local r = proxy_client:get('/request', {headers = {['Host'] = 'oauth2.com', ['Authorization'] = 'bearer ' .. token}})
-        assert.response(r).has.status(401)
       end)
     end)
 
