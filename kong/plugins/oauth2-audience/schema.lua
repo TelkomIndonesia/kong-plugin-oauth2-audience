@@ -20,6 +20,7 @@ return {
           {audience_prefix = {type = 'string'}},
           {required_scope = {type = 'array', elements = {type = 'string'}}},
           {issuer = typedefs.url({required = true})},
+          {oidc_conf_discovery = {type = 'boolean', default = true}},
           {jwt_signature_secret = {type = 'string'}},
           {jwt_signature_public_key = typedefs.certificate},
           {
@@ -39,7 +40,7 @@ return {
           {introspection_param_name_token = {type = 'string', default = 'token'}},
           {introspection_params = {type = 'map', keys = {type = 'string'}, values = {type = 'string'}}},
           {introspection_claim_expiry = {type = 'string', default = 'exp'}},
-          {introspection_cache_max_ttl = {type = 'number', default = 3600}},
+          {introspection_cache_max_ttl = {type = 'number', default = 900}},
           {ssl_verify = {type = 'boolean', default = true}}
         }
       }

@@ -33,6 +33,17 @@ local INSUFFICIENT_SCOPE = {
 }
 local INTERNAL_SERVER_ERROR = {status = 500, body = {message = 'An unexpected error occurred'}, headers = {}}
 
+local conf_cache_key = setmetatable({}, {__mode = 'k'})
+
+local function get_cache_key(conf, kind, key)
+  local tab = conf_cache_key[conf]
+  if not tab then
+    tab = {}
+    conf_cache_key[conf] = tab
+  end
+  return tostring(conf) .. tostring(tab) .. kind .. key
+end
+
 local function get_access_token_from_header(conf)
   local value = kong.request.get_header(conf.auth_header_name)
   if not value then
@@ -74,41 +85,24 @@ local function get_access_token(conf)
   return access_token
 end
 
-local function oidc_conf_cache_key(issuer)
-  local prefix = 'oauth2_audience:oidc_conf:'
-  if not issuer then
-    return prefix
-  end
-  return prefix .. (issuer and issuer or '')
-end
-
-local function fetch_oidc_conf(conf)
-  if not conf.issuer or conf.issuer == '' then
-    return nil, 'no issuer specified'
-  end
-
+local function load_oidc_conf(conf)
   local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
   local doc, err = oidc.get_discovery_doc({discovery = url, ssl_verify = conf.ssl_verify or 'no'})
-  -- try our best to populate doc from conf so that resty.openidc do not try discovery again
-  if err then
-    doc = {issuer = conf.issuer}
-  end
-
-  return doc
+  return doc, err
 end
 
-local function introspect_cache_key(issuer, access_token)
-  local prefix = 'oauth2_audience:access_token:'
-  if not access_token then
-    return prefix
+local function get_oidc_conf(conf)
+  if not conf.issuer or conf.issuer == '' or not conf.oidc_conf_discovery then
+    return nil
   end
-  return prefix .. issuer .. access_token
+  local key = get_cache_key(conf, 'issuer', conf.issuer)
+  return kong.cache:get(key, nil, load_oidc_conf, conf)
 end
 
 -- based on:
 -- https://github.com/zmartzone/lua-resty-openidc/blob/v1.7.2/lib/resty/openidc.lua#L1568
--- but without access_token parsing
-local function introspect(opts, access_token)
+-- but without access_token parsing and token validation
+local function load_token_info(opts, access_token)
   local token_param_name = opts.introspection_token_param_name or 'token'
   local body = {}
   body[token_param_name] = access_token
@@ -119,19 +113,32 @@ local function introspect(opts, access_token)
   end
 
   local discovery = opts.discovery or _EMPTY
-  local introspection_endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
-  local json, err = oidc.call_token_endpoint(opts, introspection_endpoint, body, opts.introspection_endpoint_auth_method,
-                                             'introspection')
-  local ttl = opts.introspection_interval or 0
-  if json and json.exp and (ttl < 0 or json.exp - ngx.time() < ttl) then
-    ttl = json.exp - ngx.time()
+  local endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
+
+  local json, err = oidc.call_token_endpoint(opts, endpoint, body, opts.introspection_endpoint_auth_method, 'introspection')
+  if not json then
+    return json, err
+  end
+
+  local expiry_claim = opts.introspection_expiry_claim or "exp"
+  local ttl = json[expiry_claim]
+  if not ttl then
+    return json, err
+  end
+
+  local introspection_interval = opts.introspection_interval or 0
+  if expiry_claim == "exp" then -- https://tools.ietf.org/html/rfc7662#section-2.2
+    ttl = ttl - ngx.time()
+  end
+  if introspection_interval > 0 and ttl > introspection_interval then
+    ttl = introspection_interval
   end
   return json, err, ttl
 end
 
 local function inquire(conf, access_token)
   local opts = {
-    discovery = kong.cache:get(oidc_conf_cache_key(conf.issuer), nil, fetch_oidc_conf, conf),
+    discovery = get_oidc_conf(conf),
     ssl_verify = conf.ssl_verify or 'no',
     -- jwt specific
     symmetric_key = conf.jwt_signature_secret,
@@ -154,19 +161,26 @@ local function inquire(conf, access_token)
   }
 
   local json, err = oidc.jwt_verify(access_token, opts)
-  if (err and err:find('invalid jwt', 1, true) == 1) or (not err and conf.jwt_introspection) then
-    return kong.cache:get(introspect_cache_key(conf.issuer, access_token), nil, introspect, opts, access_token)
+  local invalid_jwt = err and err:find('invalid jwt', 1, true) == 1
+  local need_introspect_jwt = (not err and conf.jwt_introspection)
+  if not (invalid_jwt or need_introspect_jwt) then
+    return json, err
   end
 
+  local key = get_cache_key(conf, 'access_token', access_token)
+  json, err = kong.cache:get(key, nil, load_token_info, opts, access_token)
+  if not json or not json.active or (json.exp and json.exp - ngx.time() <= 0) then
+    err = "invalid token"
+  end
   return json, err
 end
 
-local function load_credential(audience, issuer, client_id)
+local function load_credential(audience)
   local credential, err = kong.db.oauth2_audiences:select_by_audience(audience)
   if not credential then
-    return nil, 'audience not found'
+    return nil, err
   end
-  return credential, err
+  return credential
 end
 
 local function get_credential(conf, access_token_info)
@@ -237,10 +251,12 @@ local function hide_credentials(header_name)
     return kong.service.request.clear_header(header_name)
   end
 
-  -- hide in url
+  -- hide in url if present
   local query = kong.request.get_query()
-  query[ACCESS_TOKEN] = nil
-  kong.service.request.set_query(query)
+  if query and query[ACCESS_TOKEN] ~= nil then
+    query[ACCESS_TOKEN] = nil
+    kong.service.request.set_query(query)
+  end
 
   -- hide in body if present
   if kong.request.get_method() == 'GET' then
@@ -252,11 +268,10 @@ local function hide_credentials(header_name)
     return
   end
   local body = kong.request.get_body()
-  if not body or body[ACCESS_TOKEN] == nil then
-    return
+  if body and body[ACCESS_TOKEN] ~= nil then
+    body[ACCESS_TOKEN] = nil
+    kong.service.request.set_body(body)
   end
-  body[ACCESS_TOKEN] = nil
-  kong.service.request.set_body(body)
 end
 
 local function authenticate(conf)
@@ -280,13 +295,13 @@ local function authenticate(conf)
 
   local cred
   cred, err = get_credential(conf, token_info)
-  if err ~= nil then
+  if cred == nil or err ~= nil then
     return CREDENTIAL_INVALID
   end
 
   local cons
   cons, err = get_consumer(cred)
-  if err ~= nil then
+  if cons == nil or err ~= nil then
     kong.log.err(err)
     return INTERNAL_SERVER_ERROR
   end
