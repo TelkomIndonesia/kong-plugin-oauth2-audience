@@ -44,7 +44,7 @@ services:
       - hydra
     environment:
       CADDY_CONF: |
-        hydra.tld:443 {
+        hydra.tld:443 alias.hydra.tld:443 {
           tls self_signed
           proxy / hydra:4444
         }
@@ -52,7 +52,7 @@ services:
           tls self_signed
           proxy / hydra:4445
         }
-        hydra-jwt.tld:443 {
+        hydra-jwt.tld:443 alias.hydra-jwt.tld:443 {
           tls self_signed
           proxy / hydra_jwt:4444
         }
@@ -66,9 +66,11 @@ services:
       default:
         aliases:
           - hydra.tld
+          - alias.hydra.tld
           - admin.hydra.tld
           - hydra-jwt.tld
           - admin.hydra-jwt.tld
+          - alias.hydra-jwt.tld
   
   oauth2_client:
     image: appropriate/curl
@@ -89,7 +91,7 @@ services:
             "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
             "response_types": [ "token", "code", "id_token" ],
             "redirect_uris": ["https://notexist.tld/callback"],
-            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE",  "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
+            "audience": ["$OAUTH2_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_CLIENT_AUDIENCE",  "$OAUTH2_CLIENT_AUDIENCE_EXISTING", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
         }'
       CLIENT_JWT: 
         '{
@@ -100,7 +102,7 @@ services:
             "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
             "response_types": [ "token", "code", "id_token" ],
             "redirect_uris": ["https://notexist.tld/callback"],
-            "audience": ["$OAUTH2_JWT_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_JWT_CLIENT_AUDIENCE", "https://some.host/api/v1/reseource1", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
+            "audience": ["$OAUTH2_JWT_CLIENT_AUDIENCE", "$IDP_KONG_AUDIENCE_PREFIX$OAUTH2_JWT_CLIENT_AUDIENCE", "$OAUTH2_CLIENT_AUDIENCE_EXISTING", "$OAUTH2_CLIENT_AUDIENCE_UNREGISTED", "$OAUTH2_CLIENT_AUDIENCE_INVALID_ISS", "$OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID"]
         }'
     entrypoint: [ /bin/sh , -c ] 
     command: 
