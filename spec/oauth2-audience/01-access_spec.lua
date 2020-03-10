@@ -209,9 +209,9 @@ for _, strategy in helpers.each_strategy() do
       local host_prefixed = is_jwt and 'prefixed.oauth2-jwt.com' or 'prefixed.oauth2.com'
 
       describe('when no access token is given', function()
-        it('respond with 400', function()
+        it('respond with 401', function()
           local r = proxy_client:get('/request', {headers = {['Host'] = host}})
-          assert.response(r).has.status(400)
+          assert.response(r).has.status(401)
         end)
       end)
 

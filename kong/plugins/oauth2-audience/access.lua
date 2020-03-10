@@ -21,7 +21,7 @@ local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 local _EMPTY = {}
 local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
 local ACCESS_TOKEN = 'access_token'
-local ACCESS_TOKEN_MISSING = {status = 400, headers = {['WWW-Authenticate'] = 'Bearer realm="service"'}}
+local AUTHENTICATION_MISSING = {status = 401, headers = {['WWW-Authenticate'] = 'Bearer realm="service"'}}
 local ACCESS_TOKEN_INVALID = {
   status = 401,
   body = {error = 'invalid_token', error_description = 'The access token is invalid or has expired'},
@@ -288,7 +288,7 @@ end
 local function authenticate(conf)
   local token, auth_header_name = get_access_token(conf)
   if not token or token == '' then
-    return ACCESS_TOKEN_MISSING
+    return AUTHENTICATION_MISSING
   end
 
   local token_info, err = inquire(conf, token)
@@ -308,6 +308,7 @@ local function authenticate(conf)
   local cred
   cred, err = get_credential(conf, token_info)
   if cred == nil or err ~= nil then
+    kong.log.err(err)
     return CREDENTIAL_INVALID
   end
   cred.scope = scope
