@@ -1,5 +1,22 @@
 local ngx = require('ngx')
+-- workaround for https://github.com/Kong/kong/issues/5549.
+if kong.version_num >= 2000000 and kong.version_num <= 2000002 then
+  local ffi = require('ffi')
+  ffi.cdef [[
+    struct evp_md_ctx_st
+        {
+        const EVP_MD *digest;
+        ENGINE *engine;
+        unsigned long flags;
+        void *md_data;
+        EVP_PKEY_CTX *pctx;
+        int (*update)(EVP_MD_CTX *ctx,const void *data,size_t count);
+        };
+  ]]
+end
 local oidc = require('resty.openidc')
+
+local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 
 local _EMPTY = {}
 local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
@@ -9,7 +26,7 @@ local ACCESS_TOKEN_INVALID = {
   status = 401,
   body = {error = 'invalid_token', error_description = 'The access token is invalid or has expired'},
   headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service" ' .. 'error="invalid_token" ' ..
+    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="invalid_token", ' ..
       'error_description="The access token is invalid or has expired"'
   }
 }
@@ -18,7 +35,7 @@ local CREDENTIAL_INVALID = {
   status = 401,
   body = {error = 'invalid_token', error_description = 'Invalid audience, issuer, or client_id'},
   headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service" ' .. 'error="invalid_token" ' ..
+    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="invalid_token", ' ..
       'error_description="Invalid audience, issuer, or client_id"'
   }
 }
@@ -27,21 +44,21 @@ local INSUFFICIENT_SCOPE = {
   status = 403,
   body = {error = 'insufficient_scope', error_description = 'Missing required audience or scope'},
   headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service" ' .. 'error="insufficient_scope" ' ..
+    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="insufficient_scope", ' ..
       'error_description="Missing required audience or scope"'
   }
 }
 local INTERNAL_SERVER_ERROR = {status = 500, body = {message = 'An unexpected error occurred'}, headers = {}}
 
 local conf_cache_key = setmetatable({}, {__mode = 'k'})
-
+local tab_addr_idx = string.find(tostring(_EMPTY), ' ') + 1
 local function get_cache_key(conf, kind, key)
-  local tab = conf_cache_key[conf]
-  if not tab then
-    tab = {}
-    conf_cache_key[conf] = tab
+  local pref = conf_cache_key[conf]
+  if not pref then
+    pref = plugin_name .. string.sub(tostring(conf), tab_addr_idx) .. string.sub(tostring({}), tab_addr_idx)
+    conf_cache_key[conf] = pref
   end
-  return tostring(conf) .. tostring(tab) .. kind .. key
+  return string.format("%s:%s:%s", pref, kind, key)
 end
 
 local function get_access_token_from_header(conf)
@@ -85,18 +102,14 @@ local function get_access_token(conf)
   return access_token
 end
 
-local function load_oidc_conf(conf)
-  local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
-  local doc, err = oidc.get_discovery_doc({discovery = url, ssl_verify = conf.ssl_verify or 'no'})
-  return doc, err
-end
-
 local function get_oidc_conf(conf)
   if not conf.issuer or conf.issuer == '' or not conf.oidc_conf_discovery then
     return nil
   end
+  local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
+  local opts = {discovery = url, ssl_verify = conf.ssl_verify or 'no'}
   local key = get_cache_key(conf, 'issuer', conf.issuer)
-  return kong.cache:get(key, nil, load_oidc_conf, conf)
+  return kong.cache:get(key, nil, oidc.get_discovery_doc, opts)
 end
 
 -- based on:
@@ -114,19 +127,17 @@ local function load_token_info(opts, access_token)
 
   local discovery = opts.discovery or _EMPTY
   local endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
-
   local json, err = oidc.call_token_endpoint(opts, endpoint, body, opts.introspection_endpoint_auth_method, 'introspection')
   if not json then
     return json, err
   end
 
+  local introspection_interval = opts.introspection_interval or 0
   local expiry_claim = opts.introspection_expiry_claim or "exp"
   local ttl = json[expiry_claim]
   if not ttl then
-    return json, err
+    return json, err, introspection_interval or 60
   end
-
-  local introspection_interval = opts.introspection_interval or 0
   if expiry_claim == "exp" then -- https://tools.ietf.org/html/rfc7662#section-2.2
     ttl = ttl - ngx.time()
   end
@@ -138,7 +149,7 @@ end
 
 local function inquire(conf, access_token)
   local opts = {
-    discovery = get_oidc_conf(conf),
+    discovery = get_oidc_conf(conf), -- avoid resty.openidc discovery cache
     ssl_verify = conf.ssl_verify or 'no',
     -- jwt specific
     symmetric_key = conf.jwt_signature_secret,
@@ -169,7 +180,7 @@ local function inquire(conf, access_token)
 
   local key = get_cache_key(conf, 'access_token', access_token)
   json, err = kong.cache:get(key, nil, load_token_info, opts, access_token)
-  if not json or not json.active or (json.exp and json.exp - ngx.time() <= 0) then
+  if not json or not json.active or (type(json.exp) == 'number' and json.exp - ngx.time() <= 0) then
     err = "invalid token"
   end
   return json, err
@@ -237,7 +248,7 @@ local function is_sufficient_scope(conf, access_token_info)
       return false
     end
   end
-  return true
+  return scope
 end
 
 local function get_consumer(credential)
@@ -289,7 +300,8 @@ local function authenticate(conf)
     kong.log.err('invalid issuer: ', token_info.iss, '. expected: ', conf.issuer)
     return ACCESS_TOKEN_INVALID
   end
-  if not is_sufficient_scope(conf, token_info) then
+  local scope = is_sufficient_scope(conf, token_info)
+  if not scope then
     return INSUFFICIENT_SCOPE
   end
 
@@ -298,6 +310,7 @@ local function authenticate(conf)
   if cred == nil or err ~= nil then
     return CREDENTIAL_INVALID
   end
+  cred.scope = scope
 
   local cons
   cons, err = get_consumer(cred)
