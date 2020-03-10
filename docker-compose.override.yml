@@ -109,13 +109,13 @@ services:
       - |-
         set -euo pipefail
         
-        url="http://hydra:4445"
-        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT" ||\
-          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT"
+        url="https://admin.hydra.tld"
+        curl -sfk -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT" ||\
+          curl -sfk -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT"
         
-        url="http://hydra_jwt:4445"
-        curl -sf -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT_JWT" ||\
-          curl -sf -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT_JWT"
+        url="https://admin.hydra-jwt.tld"
+        curl -sfk -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT_JWT" ||\
+          curl -sfk -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT_JWT"
         
     
   busted:
