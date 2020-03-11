@@ -88,7 +88,8 @@ local function get_oidc_conf(conf)
   local key = get_cache_key(conf, 'issuer', conf.issuer)
   local doc, err = kong.cache:get(key, nil, oidc.get_discovery_doc, opts)
   if err then
-    err = error.new(errcode.INTERNAL_SERVER_ERROR, err or 'cannot fetch oidc configuration')
+    local desc = 'failed to fetch oidc configuration: ' .. (type(err) == 'string' and err or 'unexpected error')
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, desc)
   end
   return doc, err
 end
@@ -110,7 +111,8 @@ local function load_token_metadata(opts, access_token)
   local endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
   local json, err = oidc.call_token_endpoint(opts, endpoint, body, opts.introspection_endpoint_auth_method, 'introspection')
   if err then
-    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
+    local desc = 'failed to introspect token: ' .. (type(err) == 'string' and err or 'unexpected error')
+    return error.new(errcode.INTERNAL_SERVER_ERROR, desc)
   end
   if not json or not json.active then
     return nil
@@ -129,8 +131,12 @@ local function load_token_metadata(opts, access_token)
 end
 
 local function inquire(conf, access_token)
+  local discovery, err = get_oidc_conf(conf)
+  if err then
+    kong.log.err(err.desc)
+  end
   local opts = {
-    discovery = get_oidc_conf(conf), -- avoid resty.openidc discovery cache
+    discovery = discovery, -- avoid resty.openidc discovery cache
     ssl_verify = conf.ssl_verify or 'no',
     -- jwt specific
     symmetric_key = conf.jwt_signature_secret,
@@ -152,11 +158,13 @@ local function inquire(conf, access_token)
     introspection_cache_ignore = true -- do not use resty.openidc caching mechanism
   }
 
-  local token_md, err = oidc.jwt_verify(access_token, opts)
+  local token_md
+  token_md, err = oidc.jwt_verify(access_token, opts)
   local invalid_jwt = err and err:find('invalid jwt', 1, true) == 1
   local need_introspect_jwt = (not err and conf.jwt_introspection)
   if not (invalid_jwt or need_introspect_jwt) then
-    return token_md, err and error.new(errcode.INVALID_TOKEN, err) or err
+    local desc = err and 'failed to verify jwt: ' .. (type(err) == 'string' and err or 'unexpected error') -- err could be nil
+    return token_md, err and error.new(errcode.INVALID_TOKEN, desc)
   end
 
   local key = get_cache_key(conf, 'access_token', access_token)
@@ -175,7 +183,7 @@ end
 local function load_credential(audience)
   local credential, err = kong.db.oauth2_audiences:select_by_audience(audience)
   if err then
-    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load credential: ' .. err)
   end
   return credential, err
 end
@@ -219,6 +227,7 @@ local function validate_credential(token_metadata, credential)
 end
 
 local conf_required_scope_maps = setmetatable({}, {__mode = 'k'})
+
 local function is_sufficient_scope(conf, token_metadata)
   local scope_map = conf_required_scope_maps[conf]
   if not scope_map then
@@ -227,7 +236,6 @@ local function is_sufficient_scope(conf, token_metadata)
       scope_map[v] = true
     end
     conf_required_scope_maps[conf] = scope_map
-    kong.log.debug("done constructing required_scope_map")
   end
 
   local scope
@@ -252,7 +260,7 @@ local function get_consumer(credential)
   local key = kong.db.consumers:cache_key(credential.consumer.id)
   local cons, err = kong.cache:get(key, nil, kong.client.load_consumer, credential.consumer.id)
   if err then
-    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load consumer: ' .. err)
   end
   return cons, err
 end
@@ -289,7 +297,7 @@ end
 local function authenticate(conf)
   local token, auth_header_name = get_access_token(conf)
   if not token or token == '' then
-    return error.new(errcode.MISSING_AUTHENTICATION)
+    return error.new(errcode.MISSING_AUTHENTICATION, '')
   end
 
   local token_metadata, err = inquire(conf, token)
@@ -306,10 +314,7 @@ local function authenticate(conf)
 
   local cred
   cred, err = get_credential(conf, token_metadata)
-  if err then
-    return err
-  end
-  err = validate_credential(token_metadata, cred)
+  err = err or validate_credential(token_metadata, cred)
   if err then
     return err
   end
@@ -318,7 +323,7 @@ local function authenticate(conf)
   local cons
   cons, err = get_consumer(cred)
   if not cons then
-    return err and err or error.new(errcode.INTERNAL_SERVER_ERROR, 'can not find consumer ')
+    return err and err or error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load anonymous consumer: not found')
   end
 
   kong.client.authenticate(cons, cred)
@@ -332,7 +337,7 @@ local function authenticate_as_anonymous(conf)
   local consumer_cache_key = kong.db.consumers:cache_key(conf.anonymous)
   local consumer, err = kong.cache:get(consumer_cache_key, nil, kong.client.load_consumer, conf.anonymous, true)
   if not consumer or err then
-    return error.new(errcode.INTERNAL_SERVER_ERROR, err or 'can not find anonymous consumer')
+    return error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load anonymous consumer: ' .. (err or 'not found'))
   end
 
   kong.client.authenticate(consumer)
@@ -346,14 +351,9 @@ function _M.execute(conf)
   end
 
   local err = authenticate(conf)
-  if not err then
-    return
+  if err and conf.anonymous then
+    err = authenticate_as_anonymous(conf)
   end
-  if not conf.anonymous then
-    return kong.response.exit(err:to_status_code(), err:to_body(), {['WWW-Authenticate'] = err:to_www_authenticate('service')})
-  end
-
-  err = authenticate_as_anonymous(conf)
   if err then
     return kong.response.exit(err:to_status_code(), err:to_body(), {['WWW-Authenticate'] = err:to_www_authenticate('service')})
   end
