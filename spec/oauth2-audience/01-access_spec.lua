@@ -236,7 +236,6 @@ for _, strategy in helpers.each_strategy() do
           assert.equal(1, v:find('Bearer realm="service"'), v)
           assert.is_not_nil(v:find('error="invalid_token"'), v)
           assert.is_not_nil(v:find('error_description="invalid issuer"'), v)
-
         end)
       end)
 

@@ -3,6 +3,7 @@ local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 
 local auth_method = {'client_secret_basic', 'client_secret_post', 'private_key_jwt', 'client_secret_jwt'}
 local sign_algorithm = {'HS256', 'HS512', 'RS256'}
+local claim_header_map = {client_id = 'x-authenticated-client', sub = 'x-authenticated-user'}
 
 return {
   name = plugin_name,
@@ -41,7 +42,16 @@ return {
           {introspection_params = {type = 'map', keys = {type = 'string'}, values = {type = 'string'}}},
           {introspection_claim_expiry = {type = 'string', default = 'exp'}},
           {introspection_cache_max_ttl = {type = 'number', default = 900}},
-          {ssl_verify = {type = 'boolean', default = true}}
+          {ssl_verify = {type = 'boolean', default = true}},
+
+          {
+            claim_header_map = {
+              type = 'map',
+              keys = {type = 'string'},
+              values = typedefs.header_name,
+              default = claim_header_map
+            }
+          }
         }
       }
     }

@@ -1,4 +1,6 @@
-local ngx = require('ngx')
+local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
+
+local ngx = require 'ngx'
 -- workaround for https://github.com/Kong/kong/issues/5549.
 if kong.version_num >= 2000000 and kong.version_num <= 2000002 then
   local ffi = require('ffi')
@@ -14,32 +16,36 @@ if kong.version_num >= 2000000 and kong.version_num <= 2000002 then
         };
   ]]
 end
-local oidc = require('resty.openidc')
-
-local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
+local oidc = require 'resty.openidc'
+local kong_constants = require "kong.constants"
 local error = require('kong.plugins.' .. plugin_name .. '.error')
+
+-- redeclaration
 local errcode = error.code
+local get_req_header = kong.request.get_header
+local get_req_query = kong.request.get_query
+local get_req_method = kong.request.get_method
+local get_req_body = kong.request.get_body
+local set_req_header = kong.service.request.set_header
+local set_req_query = kong.service.request.set_query
+local set_req_body = kong.service.request.set_body
+local clear_req_header = kong.service.request.clear_header
+local log = kong.log
+local load_consumer = kong.client.load_consumer
 
 -- const
 local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
 local ACCESS_TOKEN = 'access_token'
 local TAB_EMPTY = {}
 local TAB_ADDR_IDX = string.find(tostring(TAB_EMPTY), ' ') + 1
-
-local conf_cache_key_prefixes = setmetatable({}, {__mode = 'k'})
-local function get_cache_key(conf, kind, key)
-  local pref = conf_cache_key_prefixes[conf]
-  if not pref then
-    local random = string.sub(tostring({}), TAB_ADDR_IDX) -- for hopefully-sufficient randomness
-    pref = plugin_name .. string.sub(tostring(conf), TAB_ADDR_IDX) .. random
-    conf_cache_key_prefixes[conf] = pref
-    kong.log.debug("done constructing cache_key_prefix")
-  end
-  return string.format("%s:%s:%s", pref, kind or '', key or '')
-end
+local HEADER_CONSUMER_ID = kong_constants.HEADERS.CONSUMER_ID
+local HEADER_CONSUMER_CUSTOM_ID = kong_constants.HEADERS.CONSUMER_CUSTOM_ID
+local HEADER_CONSUMER_USERNAME = kong_constants.HEADERS.CONSUMER_USERNAME
+local HEADER_ANONYMOUS = kong_constants.HEADERS.ANONYMOUS
+local HEADER_CREDENTIAL = 'x-authenticated-audience'
 
 local function get_access_token_from_header(conf)
-  local value = kong.request.get_header(conf.auth_header_name)
+  local value = get_req_header(conf.auth_header_name)
   if not value then
     return
   end
@@ -55,17 +61,17 @@ end
 
 local function get_access_token_from_parameters()
   -- from url
-  local token = kong.request.get_query()[ACCESS_TOKEN]
+  local token = get_req_query()[ACCESS_TOKEN]
   if type(token) == 'string' then
     return token
   end
 
   -- from body
-  local method = kong.request.get_method()
+  local method = get_req_method()
   if method ~= 'POST' and method ~= 'PUT' and method ~= 'PATCH' then
     return
   end
-  token = kong.request.get_body()[ACCESS_TOKEN]
+  token = get_req_body()[ACCESS_TOKEN]
   return type(token) == 'string' and token
 end
 
@@ -77,6 +83,18 @@ local function get_access_token(conf)
 
   access_token = get_access_token_from_parameters()
   return access_token
+end
+
+local conf_cache_key_prefixes = setmetatable({}, {__mode = 'k'})
+
+local function get_cache_key(conf, kind, key)
+  local pref = conf_cache_key_prefixes[conf]
+  if not pref then
+    local random = string.sub(tostring({}), TAB_ADDR_IDX) -- for hopefully-sufficient randomness
+    pref = plugin_name .. string.sub(tostring(conf), TAB_ADDR_IDX) .. random
+    conf_cache_key_prefixes[conf] = pref
+  end
+  return string.format("%s:%s:%s", pref, kind or '', key or '')
 end
 
 local function get_oidc_conf(conf)
@@ -133,7 +151,7 @@ end
 local function inquire(conf, access_token)
   local discovery, err = get_oidc_conf(conf)
   if err then
-    kong.log.err(err.desc)
+    log.err(err.desc)
   end
   local opts = {
     discovery = discovery, -- avoid resty.openidc discovery cache
@@ -258,39 +276,79 @@ end
 
 local function get_consumer(credential)
   local key = kong.db.consumers:cache_key(credential.consumer.id)
-  local cons, err = kong.cache:get(key, nil, kong.client.load_consumer, credential.consumer.id)
+  local cons, err = kong.cache:get(key, nil, load_consumer, credential.consumer.id)
   if err then
     err = error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load consumer: ' .. err)
   end
   return cons, err
 end
 
+local function set_upstream_headers(conf, consumer, credential, token_metadata)
+  if consumer and consumer.id then
+    set_req_header(HEADER_CONSUMER_ID, consumer.id)
+  else
+    clear_req_header(HEADER_CONSUMER_ID)
+  end
+
+  if consumer and consumer.custom_id then
+    set_req_header(HEADER_CONSUMER_CUSTOM_ID, consumer.custom_id)
+  else
+    clear_req_header(HEADER_CONSUMER_CUSTOM_ID)
+  end
+
+  if consumer and consumer.username then
+    set_req_header(HEADER_CONSUMER_USERNAME, consumer.username)
+  else
+    clear_req_header(HEADER_CONSUMER_USERNAME)
+  end
+
+  if not credential then
+    set_req_header(HEADER_ANONYMOUS, true)
+    clear_req_header(HEADER_CREDENTIAL)
+    return
+  end
+
+  clear_req_header(HEADER_ANONYMOUS)
+  if credential.audience then
+    set_req_header(HEADER_CREDENTIAL, credential.audience)
+  else
+    clear_req_header(HEADER_CREDENTIAL)
+  end
+
+  for k, n in pairs(conf.claim_header_map) do
+    local v = token_metadata[k]
+    if v then
+      set_req_header(n, v)
+    end
+  end
+end
+
 local function hide_credentials(header_name)
   -- hide in header
   if header_name then
-    return kong.service.request.clear_header(header_name)
+    return clear_req_header(header_name)
   end
 
   -- hide in url if present
-  local query = kong.request.get_query()
+  local query = get_req_query()
   if query and query[ACCESS_TOKEN] ~= nil then
     query[ACCESS_TOKEN] = nil
-    kong.service.request.set_query(query)
+    set_req_query(query)
   end
 
   -- hide in body if present
-  if kong.request.get_method() == 'GET' then
+  if get_req_method() == 'GET' then
     return
   end
-  local content_type = kong.request.get_header('content-type')
+  local content_type = get_req_header('content-type')
   local is_form_post = content_type and content_type:find('application/x-www-form-urlencoded', 1, true)
   if not is_form_post then
     return
   end
-  local body = kong.request.get_body()
+  local body = get_req_body()
   if body and body[ACCESS_TOKEN] ~= nil then
     body[ACCESS_TOKEN] = nil
-    kong.service.request.set_body(body)
+    set_req_body(body)
   end
 end
 
@@ -327,7 +385,7 @@ local function authenticate(conf)
   end
 
   kong.client.authenticate(cons, cred)
-
+  set_upstream_headers(conf, cons, cred, token_metadata)
   if conf.hide_credentials then
     hide_credentials(auth_header_name)
   end
@@ -335,12 +393,13 @@ end
 
 local function authenticate_as_anonymous(conf)
   local consumer_cache_key = kong.db.consumers:cache_key(conf.anonymous)
-  local consumer, err = kong.cache:get(consumer_cache_key, nil, kong.client.load_consumer, conf.anonymous, true)
+  local consumer, err = kong.cache:get(consumer_cache_key, nil, load_consumer, conf.anonymous, true)
   if not consumer or err then
     return error.new(errcode.INTERNAL_SERVER_ERROR, 'failed to load anonymous consumer: ' .. (err or 'not found'))
   end
 
   kong.client.authenticate(consumer)
+  set_upstream_headers(conf, consumer)
 end
 
 local _M = {}
