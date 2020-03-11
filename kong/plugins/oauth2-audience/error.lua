@@ -49,14 +49,14 @@ end
 
 function Error:to_www_authenticate(realm)
   if self.code == code.INTERNAL_SERVER_ERROR or self.code == code.MISSING_AUTHENTICATION then
-    return
+    return string.format('Bearer realm="%s"', realm:gsub('"', '\\"'))
   end
 
   local desc = self.description
-  if not desc or type(desc) ~= string then
-    desc = ''
+  if not desc or type(desc) ~= 'string' then
+    return string.format('Bearer realm="%s", error="%s"', realm:gsub('"', '\\"'), code_to_www_authenticate_error(self.code))
   end
-  return string.format('Bearer realm="%s", error="$s", error_description="%s"', realm:gsub('"', '\\"'),
+  return string.format('Bearer realm="%s", error="%s", error_description="%s"', realm:gsub('"', '\\"'),
                        code_to_www_authenticate_error(self.code), desc:gsub('"', '\\"'))
 end
 
@@ -73,8 +73,8 @@ function Error:to_body()
 end
 
 local _M_ = {
-  new = function(...)
-    return Error:new(...)
+  new = function(code, description)
+    return Error:new({code = code, description = description})
   end,
 
   code = code

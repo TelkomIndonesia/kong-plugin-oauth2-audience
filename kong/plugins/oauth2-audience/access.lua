@@ -17,48 +17,25 @@ end
 local oidc = require('resty.openidc')
 
 local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
+local error = require('kong.plugins.' .. plugin_name .. '.error')
+local errcode = error.code
 
-local _EMPTY = {}
+-- const
 local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
 local ACCESS_TOKEN = 'access_token'
-local AUTHENTICATION_MISSING = {status = 401, headers = {['WWW-Authenticate'] = 'Bearer realm="service"'}}
-local ACCESS_TOKEN_INVALID = {
-  status = 401,
-  body = {error = 'invalid_token', error_description = 'The access token is invalid or has expired'},
-  headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="invalid_token", ' ..
-      'error_description="The access token is invalid or has expired"'
-  }
-}
+local TAB_EMPTY = {}
+local TAB_ADDR_IDX = string.find(tostring(TAB_EMPTY), ' ') + 1
 
-local CREDENTIAL_INVALID = {
-  status = 401,
-  body = {error = 'invalid_token', error_description = 'Invalid audience, issuer, or client_id'},
-  headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="invalid_token", ' ..
-      'error_description="Invalid audience, issuer, or client_id"'
-  }
-}
-
-local INSUFFICIENT_SCOPE = {
-  status = 403,
-  body = {error = 'insufficient_scope', error_description = 'Missing required audience or scope'},
-  headers = {
-    ['WWW-Authenticate'] = 'Bearer realm="service", ' .. 'error="insufficient_scope", ' ..
-      'error_description="Missing required audience or scope"'
-  }
-}
-local INTERNAL_SERVER_ERROR = {status = 500, body = {message = 'An unexpected error occurred'}, headers = {}}
-
-local conf_cache_key = setmetatable({}, {__mode = 'k'})
-local tab_addr_idx = string.find(tostring(_EMPTY), ' ') + 1
+local conf_cache_key_prefixes = setmetatable({}, {__mode = 'k'})
 local function get_cache_key(conf, kind, key)
-  local pref = conf_cache_key[conf]
+  local pref = conf_cache_key_prefixes[conf]
   if not pref then
-    pref = plugin_name .. string.sub(tostring(conf), tab_addr_idx) .. string.sub(tostring({}), tab_addr_idx)
-    conf_cache_key[conf] = pref
+    local random = string.sub(tostring({}), TAB_ADDR_IDX) -- for hopefully-sufficient randomness
+    pref = plugin_name .. string.sub(tostring(conf), TAB_ADDR_IDX) .. random
+    conf_cache_key_prefixes[conf] = pref
+    kong.log.debug("done constructing cache_key_prefix")
   end
-  return string.format("%s:%s:%s", pref, kind, key)
+  return string.format("%s:%s:%s", pref, kind or '', key or '')
 end
 
 local function get_access_token_from_header(conf)
@@ -109,42 +86,46 @@ local function get_oidc_conf(conf)
   local url = conf.issuer .. (conf.issuer:sub(-1) == '/' and '' or '/') .. OIDC_CONFIG_PATH
   local opts = {discovery = url, ssl_verify = conf.ssl_verify or 'no'}
   local key = get_cache_key(conf, 'issuer', conf.issuer)
-  return kong.cache:get(key, nil, oidc.get_discovery_doc, opts)
+  local doc, err = kong.cache:get(key, nil, oidc.get_discovery_doc, opts)
+  if err then
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, err or 'cannot fetch oidc configuration')
+  end
+  return doc, err
 end
 
 -- based on:
 -- https://github.com/zmartzone/lua-resty-openidc/blob/v1.7.2/lib/resty/openidc.lua#L1568
--- but without access_token parsing and token validation
-local function load_token_info(opts, access_token)
+-- but without access_token parsing and expiry validation
+local function load_token_metadata(opts, access_token)
   local token_param_name = opts.introspection_token_param_name or 'token'
   local body = {}
   body[token_param_name] = access_token
   body.client_id = opts.client_id
   body.client_secret = opts.client_secret
-  for key, val in pairs(opts.introspection_params or _EMPTY) do
+  for key, val in pairs(opts.introspection_params or TAB_EMPTY) do
     body[key] = val
   end
 
-  local discovery = opts.discovery or _EMPTY
+  local discovery = opts.discovery or TAB_EMPTY
   local endpoint = opts.introspection_endpoint or discovery.introspection_endpoint
   local json, err = oidc.call_token_endpoint(opts, endpoint, body, opts.introspection_endpoint_auth_method, 'introspection')
-  if not json then
-    return json, err
+  if err then
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
+  end
+  if not json or not json.active then
+    return nil
   end
 
   local introspection_interval = opts.introspection_interval or 0
-  local expiry_claim = opts.introspection_expiry_claim or "exp"
-  local ttl = json[expiry_claim]
-  if not ttl then
-    return json, err, introspection_interval or 60
+  local exp = json[opts.introspection_expiry_claim or "exp"]
+  if type(exp) ~= 'number' then
+    return json, nil, introspection_interval or 60
   end
-  if expiry_claim == "exp" then -- https://tools.ietf.org/html/rfc7662#section-2.2
-    ttl = ttl - ngx.time()
-  end
-  if introspection_interval > 0 and ttl > introspection_interval then
+  local ttl = exp - ngx.time()
+  if introspection_interval > 0 and introspection_interval < ttl then
     ttl = introspection_interval
   end
-  return json, err, ttl
+  return json, nil, ttl
 end
 
 local function inquire(conf, access_token)
@@ -171,42 +152,45 @@ local function inquire(conf, access_token)
     introspection_cache_ignore = true -- do not use resty.openidc caching mechanism
   }
 
-  local json, err = oidc.jwt_verify(access_token, opts)
+  local token_md, err = oidc.jwt_verify(access_token, opts)
   local invalid_jwt = err and err:find('invalid jwt', 1, true) == 1
   local need_introspect_jwt = (not err and conf.jwt_introspection)
   if not (invalid_jwt or need_introspect_jwt) then
-    return json, err
+    return token_md, err and error.new(errcode.INVALID_TOKEN, err) or err
   end
 
   local key = get_cache_key(conf, 'access_token', access_token)
-  json, err = kong.cache:get(key, nil, load_token_info, opts, access_token)
-  if not json or not json.active or (type(json.exp) == 'number' and json.exp - ngx.time() <= 0) then
-    err = "invalid token"
+  token_md, err = kong.cache:get(key, nil, load_token_metadata, opts, access_token)
+  if err then
+    return nil, err
   end
-  return json, err
+  local exp = token_md and token_md[opts.introspection_expiry_claim or "exp"] or 0
+  if exp - ngx.time() <= 0 then
+    err = error.new(errcode.INVALID_TOKEN, 'invalid or expired access token')
+  end
+
+  return token_md, err
 end
 
 local function load_credential(audience)
   local credential, err = kong.db.oauth2_audiences:select_by_audience(audience)
-  if not credential then
-    return nil, err
+  if err then
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
   end
-  return credential
+  return credential, err
 end
 
-local function get_credential(conf, access_token_info)
-  if type(access_token_info) ~= 'table' then
-    return nil, ACCESS_TOKEN_INVALID
+local function get_credential(conf, token_metadata)
+  if type(token_metadata) ~= 'table' then
+    return nil, error.new(errcode.INVALID_TOKEN, 'invalid access token metadata')
   end
 
-  local issuer = access_token_info.iss
-  local client_id = access_token_info.client_id
-  local auds = access_token_info.aud
+  local audience = ''
+  local auds = token_metadata.aud
   if type(auds) == 'string' then
     auds = {auds}
   end
-  local audience = ''
-  for _, v in ipairs(auds or _EMPTY) do
+  for _, v in ipairs(auds or TAB_EMPTY) do
     local b, e = v:find(conf.audience_prefix or '', 1, true)
     if b == 1 then
       audience = v:sub(e + 1)
@@ -214,46 +198,63 @@ local function get_credential(conf, access_token_info)
     end
   end
   if audience == '' then
-    return nil, 'invalid audience'
+    return nil, error.new(errcode.INVALID_TOKEN, 'missing suitable audience in access token metadata')
   end
 
   local key = kong.db.oauth2_audiences:cache_key(audience)
-  local credential, err = kong.cache:get(key, nil, load_credential, audience, issuer, client_id)
-  if not credential then
-    return credential, err
-  end
-  if issuer ~= credential.issuer then
-    return nil, 'invalid issuer'
-  end
-  if client_id ~= credential.client_id then
-    return nil, 'invalid client_id'
-  end
-  return credential
+  local credential, err = kong.cache:get(key, nil, load_credential, audience)
+  return credential, err
 end
 
-local function is_sufficient_scope(conf, access_token_info)
-  local scope = {}
-  if type(access_token_info.scope) == 'string' then
-    for v in access_token_info.scope:gmatch('%S+') do
-      scope[v] = true
+local function validate_credential(token_metadata, credential)
+  if not credential then
+    return error.new(errcode.INVALID_TOKEN, 'invalid audience')
+  end
+  if token_metadata.client_id ~= credential.client_id then
+    return error.new(errcode.INVALID_TOKEN, 'invalid client_id for the given audience')
+  end
+  if token_metadata.iss ~= credential.issuer then
+    return error.new(errcode.INVALID_TOKEN, 'invalid issuer for the given audience')
+  end
+end
+
+local conf_required_scope_maps = setmetatable({}, {__mode = 'k'})
+local function is_sufficient_scope(conf, token_metadata)
+  local scope_map = conf_required_scope_maps[conf]
+  if not scope_map then
+    scope_map = {}
+    for _, v in ipairs(conf.required_scope or TAB_EMPTY) do
+      scope_map[v] = true
     end
-  elseif type(access_token_info.scp) == 'table' then
-    for _, v in ipairs(access_token_info.scp) do
-      scope[v] = true
+    conf_required_scope_maps[conf] = scope_map
+    kong.log.debug("done constructing required_scope_map")
+  end
+
+  local scope
+  local found = 0
+  if type(token_metadata.scope) == 'string' then
+    scope = {}
+    for v in token_metadata.scope:gmatch('%S+') do
+      table.insert(scope, v)
+      found = found + (scope_map[v] and 1 or 0)
+    end
+  elseif type(token_metadata.scp) == 'table' then
+    scope = token_metadata.scp
+    for _, v in ipairs(scope) do
+      found = found + (scope_map[v] and 1 or 0)
     end
   end
 
-  for _, v in ipairs(conf.required_scope) do
-    if scope[v] ~= true then
-      return false
-    end
-  end
-  return scope
+  return found == #conf.required_scope and scope or nil
 end
 
 local function get_consumer(credential)
   local key = kong.db.consumers:cache_key(credential.consumer.id)
-  return kong.cache:get(key, nil, kong.client.load_consumer, credential.consumer.id)
+  local cons, err = kong.cache:get(key, nil, kong.client.load_consumer, credential.consumer.id)
+  if err then
+    err = error.new(errcode.INTERNAL_SERVER_ERROR, err)
+  end
+  return cons, err
 end
 
 local function hide_credentials(header_name)
@@ -288,36 +289,36 @@ end
 local function authenticate(conf)
   local token, auth_header_name = get_access_token(conf)
   if not token or token == '' then
-    return AUTHENTICATION_MISSING
+    return error.new(errcode.MISSING_AUTHENTICATION)
   end
 
-  local token_info, err = inquire(conf, token)
-  if err ~= nil then
-    kong.log.err(err)
-    return ACCESS_TOKEN_INVALID
+  local token_metadata, err = inquire(conf, token)
+  if err then
+    return err
   end
-  if conf.issuer ~= token_info.iss then
-    kong.log.err('invalid issuer: ', token_info.iss, '. expected: ', conf.issuer)
-    return ACCESS_TOKEN_INVALID
+  if conf.issuer ~= token_metadata.iss then
+    return error.new(errcode.INVALID_TOKEN, 'invalid issuer')
   end
-  local scope = is_sufficient_scope(conf, token_info)
+  local scope = is_sufficient_scope(conf, token_metadata)
   if not scope then
-    return INSUFFICIENT_SCOPE
+    return error.new(errcode.INSUFFICIENT_SCOPE, 'missing one or more required scope')
   end
 
   local cred
-  cred, err = get_credential(conf, token_info)
-  if cred == nil or err ~= nil then
-    kong.log.err(err)
-    return CREDENTIAL_INVALID
+  cred, err = get_credential(conf, token_metadata)
+  if err then
+    return err
+  end
+  err = validate_credential(token_metadata, cred)
+  if err then
+    return err
   end
   cred.scope = scope
 
   local cons
   cons, err = get_consumer(cred)
-  if cons == nil or err ~= nil then
-    kong.log.err(err)
-    return INTERNAL_SERVER_ERROR
+  if not cons then
+    return err and err or error.new(errcode.INTERNAL_SERVER_ERROR, 'can not find consumer ')
   end
 
   kong.client.authenticate(cons, cred)
@@ -330,8 +331,8 @@ end
 local function authenticate_as_anonymous(conf)
   local consumer_cache_key = kong.db.consumers:cache_key(conf.anonymous)
   local consumer, err = kong.cache:get(consumer_cache_key, nil, kong.client.load_consumer, conf.anonymous, true)
-  if err then
-    return INTERNAL_SERVER_ERROR
+  if not consumer or err then
+    return error.new(errcode.INTERNAL_SERVER_ERROR, err or 'can not find anonymous consumer')
   end
 
   kong.client.authenticate(consumer)
@@ -345,16 +346,16 @@ function _M.execute(conf)
   end
 
   local err = authenticate(conf)
-  if err == nil then
+  if not err then
     return
   end
   if not conf.anonymous then
-    return kong.response.exit(err.status, err.body, err.headers)
+    return kong.response.exit(err:to_status_code(), err:to_body(), {['WWW-Authenticate'] = err:to_www_authenticate('service')})
   end
 
   err = authenticate_as_anonymous(conf)
-  if err ~= nil then
-    return kong.response.exit(err.status, err.body, err.headers)
+  if err then
+    return kong.response.exit(err:to_status_code(), err:to_body(), {['WWW-Authenticate'] = err:to_www_authenticate('service')})
   end
 end
 

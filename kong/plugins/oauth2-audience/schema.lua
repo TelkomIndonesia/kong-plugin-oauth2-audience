@@ -18,7 +18,7 @@ return {
           {run_on_preflight = {type = 'boolean', default = true}},
           {auth_header_name = {type = 'string', default = 'authorization'}},
           {audience_prefix = {type = 'string'}},
-          {required_scope = {type = 'array', elements = {type = 'string'}}},
+          {required_scope = {type = 'array', elements = {type = 'string'}, default = {}}},
           {issuer = typedefs.url({required = true})},
           {oidc_conf_discovery = {type = 'boolean', default = true}},
           {jwt_signature_secret = {type = 'string'}},
