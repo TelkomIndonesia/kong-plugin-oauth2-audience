@@ -18,10 +18,15 @@ return {
           {anonymous = {type = 'string', uuid = true, legacy = true}},
           {run_on_preflight = {type = 'boolean', default = true}},
           {auth_header_name = {type = 'string', default = 'authorization'}},
-          {audience_prefix = {type = 'string'}},
-          {required_scope = {type = 'array', elements = {type = 'string'}, default = {}}},
+
+          {ssl_verify = {type = 'boolean', default = true}},
+
           {issuer = typedefs.url({required = true})},
           {oidc_conf_discovery = {type = 'boolean', default = true}},
+          {required_scope = {type = 'array', elements = {type = 'string'}, default = {}}},
+          {required_audiences = {type = 'array', elements = {type = 'string'}, default = {}}},
+          {audience_prefix = {type = 'string'}},
+
           {jwt_signature_secret = {type = 'string'}},
           {jwt_signature_public_key = typedefs.certificate},
           {
@@ -32,6 +37,7 @@ return {
             }
           },
           {jwt_introspection = {type = 'boolean', default = false}},
+
           {introspection_endpoint = typedefs.url},
           {introspection_client_id = {type = 'string'}},
           {introspection_client_secret = {type = 'string'}},
@@ -42,7 +48,6 @@ return {
           {introspection_params = {type = 'map', keys = {type = 'string'}, values = {type = 'string'}}},
           {introspection_claim_expiry = {type = 'string', default = 'exp'}},
           {introspection_cache_max_ttl = {type = 'number', default = 900}},
-          {ssl_verify = {type = 'boolean', default = true}},
 
           {
             claim_header_map = {

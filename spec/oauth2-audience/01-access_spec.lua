@@ -54,6 +54,7 @@ end
 local function get_plugin_config(is_jwt, replace)
   return merge({
     required_scope = split(env.oauth2_client_scope, ' '),
+    required_audiences = {env.oauth2_client_audience_existing},
     issuer = is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer,
     introspection_endpoint = is_jwt and env.idp_jwt_introspection_endpoint or env.idp_opaque_introspection_endpoint,
     introspection_client_id = env.oauth2_client_id,
@@ -73,9 +74,8 @@ end
 local function fetch_token(is_jwt, audience, scope)
   local id = env.oauth2_client_id
   local secret = env.oauth2_client_secret
-  audience = audience or {(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)}
-  audience = type(audience) == 'string' and {audience} or audience
-  table.insert(audience, env.oauth2_client_audience_existing)
+  audience = audience or (is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)
+  audience = type(audience) == 'string' and {audience, env.oauth2_client_audience_existing} or audience
 
   local httpc = http.new()
   local uri = is_jwt and env.idp_jwt_token_endpoint or env.idp_opaque_token_endpoint
@@ -126,6 +126,8 @@ for _, strategy in helpers.each_strategy() do
   describe('Plugin: ' .. plugin_name .. ' [#' .. strategy .. ']', function()
     local proxy_client
 
+    local consumer
+
     setup(function()
       local bp, db = helpers.get_db_utils(strategy, nil, {plugin_name})
 
@@ -170,7 +172,7 @@ for _, strategy in helpers.each_strategy() do
         config = get_plugin_config(true, {jwt_introspection = true, introspection_cache_max_ttl = 0.001})
       })
 
-      local consumer = db.consumers:insert({username = "client"})
+      consumer = db.consumers:insert({username = "client"})
       db.oauth2_audiences:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
       db.oauth2_audiences:insert(get_audience_credential(true, {consumer = {id = consumer.id}}))
       db.oauth2_audiences:insert({
@@ -280,6 +282,15 @@ for _, strategy in helpers.each_strategy() do
           local token = fetch_token(is_jwt)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
           assert.response(r).has.status(200)
+
+          local h = assert.request(r).has.header('x-authenticated-client')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-authenticated-user')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-authenticated-audience')
+          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+          h = assert.request(r).has.header('x-consumer-id')
+          assert.equal(consumer.id, h)
         end)
       end)
 
@@ -302,6 +313,15 @@ for _, strategy in helpers.each_strategy() do
           local token = fetch_token(is_jwt, audience)
           local r = proxy_client:get('/request', {headers = {['Host'] = host_prefixed, ['Authorization'] = 'bearer ' .. token}})
           assert.response(r).has.status(200)
+
+          local h = assert.request(r).has.header('x-authenticated-client')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-authenticated-user')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-authenticated-audience')
+          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+          h = assert.request(r).has.header('x-consumer-id')
+          assert.equal(consumer.id, h)
         end)
       end)
 
@@ -314,6 +334,19 @@ for _, strategy in helpers.each_strategy() do
           assert.equal(1, v:find('Bearer realm="service"'), v)
           assert.is_not_nil(v:find('error="insufficient_scope"'), v)
           assert.is_not_nil(v:find('error_description="missing one or more required scope"'), v)
+        end)
+      end)
+
+      describe('when ' .. (is_jwt and 'jwt' or '') ..
+                 ' access token match credential but required audiences missing insuficient', function()
+        it('respond with 403', function()
+          local token = fetch_token(is_jwt, {is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience})
+          local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(403)
+          local v = assert.response(r).has.header('www-authenticate')
+          assert.equal(1, v:find('Bearer realm="service"'), v)
+          assert.is_not_nil(v:find('error="insufficient_scope"'), v)
+          assert.is_not_nil(v:find('error_description="missing one or more required audiences"'), v)
         end)
       end)
     end

@@ -244,34 +244,43 @@ local function validate_credential(token_metadata, credential)
   end
 end
 
-local conf_required_scope_maps = setmetatable({}, {__mode = 'k'})
-
 local function is_sufficient_scope(conf, token_metadata)
-  local scope_map = conf_required_scope_maps[conf]
-  if not scope_map then
-    scope_map = {}
-    for _, v in ipairs(conf.required_scope or TAB_EMPTY) do
-      scope_map[v] = true
-    end
-    conf_required_scope_maps[conf] = scope_map
-  end
-
-  local scope
-  local found = 0
+  local scope = {}
   if type(token_metadata.scope) == 'string' then
-    scope = {}
     for v in token_metadata.scope:gmatch('%S+') do
-      table.insert(scope, v)
-      found = found + (scope_map[v] and 1 or 0)
+      scope[v] = true
     end
   elseif type(token_metadata.scp) == 'table' then
-    scope = token_metadata.scp
-    for _, v in ipairs(scope) do
-      found = found + (scope_map[v] and 1 or 0)
+    -- for idp that implement the old https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-06
+    for _, v in ipairs(token_metadata.scp) do
+      scope[v] = true
     end
   end
 
-  return found == #conf.required_scope and scope or nil
+  for _, v in ipairs(conf.required_scope) do
+    if not scope[v] then
+      return false
+    end
+  end
+  return scope
+end
+
+local function is_required_audiences_present(conf, token_metadata)
+  local auds = {}
+  if type(token_metadata.aud) == 'string' then
+    auds[token_metadata.aud] = true
+  elseif type(token_metadata.aud) == 'table' then
+    for _, v in ipairs(token_metadata.aud) do
+      auds[v] = true
+    end
+  end
+
+  for _, v in ipairs(conf.required_audiences) do
+    if not auds[v] then
+      return false
+    end
+  end
+  return auds
 end
 
 local function get_consumer(credential)
@@ -369,6 +378,10 @@ local function authenticate(conf)
   if not scope then
     return error.new(errcode.INSUFFICIENT_SCOPE, 'missing one or more required scope')
   end
+  local auds = is_required_audiences_present(conf, token_metadata)
+  if not auds then
+    return error.new(errcode.INSUFFICIENT_SCOPE, 'missing one or more required audiences')
+  end
 
   local cred
   cred, err = get_credential(conf, token_metadata)
@@ -377,6 +390,7 @@ local function authenticate(conf)
     return err
   end
   cred.scope = scope
+  cred.audiences = auds
 
   local cons
   cons, err = get_consumer(cred)
