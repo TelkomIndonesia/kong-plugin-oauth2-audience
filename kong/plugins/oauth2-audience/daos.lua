@@ -2,13 +2,13 @@ local typedefs = require 'kong.db.schema.typedefs'
 
 return {
   oauth2_audiences = {
+    ttl = true,
     name = 'oauth2_audiences',
     primary_key = {'id'},
     endpoint_key = 'audience',
     cache_key = {'audience'},
     generate_admin_api = true,
     admin_api_name = 'oauth2-audiences',
-    admin_api_nested_name = 'oauth2-audience',
     fields = {
       {id = typedefs.uuid},
       {created_at = typedefs.auto_timestamp_s},
