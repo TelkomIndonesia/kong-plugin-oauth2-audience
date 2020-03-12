@@ -8,7 +8,7 @@ local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
 local ngx = require('ngx')
 
 for _, strategy in helpers.each_strategy() do
-  describe("Plugin: key-auth (API) [#" .. strategy .. "]", function()
+  describe("Plugin: oauth2-audience (API) [#" .. strategy .. "]", function()
     local consumer
     local admin_client
     local bp
@@ -16,7 +16,7 @@ for _, strategy in helpers.each_strategy() do
     local route1
     local route2
     setup(function()
-      bp, db = helpers.get_db_utils(strategy, {"routes", "services", "plugins", "consumers", schema_name})
+      bp, db = helpers.get_db_utils(strategy, {"routes", "services", "plugins", "consumers", schema_name}, {plugin_name})
 
       route1 = bp.routes:insert{hosts = {"1.oauth2-audience.test"}}
       route2 = bp.routes:insert{hosts = {"2.oauth2-audience.test"}}
@@ -124,6 +124,128 @@ for _, strategy in helpers.each_strategy() do
           assert.res_status(404, res)
         end)
 
+        it("reject oauth2-audience creation without issuer or client_id", function()
+          local res = assert(admin_client:send{
+            method = "POST",
+            path = path,
+            headers = {["Content-Type"] = "application/json"},
+            body = {issuer = "https://idp.jwt"}
+          })
+          assert.res_status(400, res)
+          res = assert(admin_client:send{
+            method = "POST",
+            path = path,
+            headers = {["Content-Type"] = "application/json"},
+            body = {client_id = 'client'}
+          })
+          assert.res_status(400, res)
+          res = assert(admin_client:send{
+            method = "POST",
+            path = path,
+            headers = {["Content-Type"] = "application/json"},
+            body = {}
+          })
+          assert.res_status(400, res)
+        end)
+
+        describe("GET", function()
+          setup(function()
+            for i = 1, 3 do
+              assert(db.oauth2_audiences:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'})
+            end
+          end)
+          teardown(function()
+            db:truncate(schema_name)
+          end)
+
+          it("retrieves the first page", function()
+            local res = assert(admin_client:send{method = "GET", path = path})
+            local body = assert.res_status(200, res)
+            local json = cjson.decode(body)
+            assert.is_table(json.data)
+            assert.equal(3, #json.data)
+          end)
+        end)
+
+        describe("GET #ttl", function()
+          setup(function()
+            for i = 1, 3 do
+              assert(db.oauth2_audiences:insert({
+                consumer = {id = consumer.id},
+                issuer = "https://idp.jwt",
+                client_id = 'client'
+              }, {ttl = 10}))
+            end
+          end)
+          teardown(function()
+            db:truncate(schema_name)
+          end)
+
+          it("entries contain ttl when specified", function()
+            local res = assert(admin_client:send{method = "GET", path = path})
+            local body = assert.res_status(200, res)
+            local json = cjson.decode(body)
+            assert.is_table(json.data)
+            for _, credential in ipairs(json.data) do
+              assert.not_nil(credential.ttl)
+            end
+          end)
+        end)
+
+      end)
+
+    end)
+
+    describe("/consumers/:consumer/" .. api_name .. '/:id', function()
+      local path = string.format("/consumers/%s/%s/", consumer.username, api_name)
+
+      local credential
+      before_each(function()
+        db:truncate(schema_name)
+        credential = db.oauth2_audiences:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
+      end)
+
+      describe("GET", function()
+        it("retrieves oauth2-audience by id", function()
+          local res = assert(admin_client:send{method = "GET", path = path .. credential.id})
+          local body = assert.res_status(200, res)
+          local json = cjson.decode(body)
+          assert.equal(credential.id, json.id)
+        end)
+
+        it("retrieves oauth2-audience by audience", function()
+          local res = assert(admin_client:send{method = "GET", path = path .. credential.audience})
+          local body = assert.res_status(200, res)
+          local json = cjson.decode(body)
+          assert.equal(credential.id, json.id)
+        end)
+
+        it("retrieves credential by id only if the credential belongs to the specified consumer", function()
+          local other = assert(bp.consumers:insert{username = "alice"})
+
+          local res = assert(admin_client:send{method = "GET", path = path .. credential.id})
+          assert.res_status(200, res)
+
+          res = assert(admin_client:send{
+            method = "GET",
+            path = string.format("/consumers/%s/%s/%s", other.username, api_name, credential.id)
+          })
+          assert.res_status(404, res)
+        end)
+
+        it("oauth2-audience contains #ttl", function()
+          local credential = db.oauth2_audiences:insert({
+            consumer = {id = consumer.id},
+            issuer = "https://idp.jwt",
+            client_id = 'client'
+          }, {ttl = 10})
+
+          local res = assert(admin_client:send{method = "GET", path = path .. credential.id})
+          local body = assert.res_status(200, res)
+          local json = cjson.decode(body)
+          assert.equal(credential.id, json.id)
+          assert.not_nil(json.ttl)
+        end)
       end)
     end)
   end)
