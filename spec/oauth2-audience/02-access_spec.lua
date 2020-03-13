@@ -1,4 +1,5 @@
 local ngx = require 'ngx'
+local cjson = require 'cjson'
 
 local helpers = require 'spec.helpers'
 local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
@@ -14,7 +15,7 @@ local revoke = oauth2_server.revoke
 
 local pre_auth_simulation = [[
   local consumer = {id = "%s"}
-  local credential = {id="%s"}
+  local credential = {id = "%s"}
   kong.client.authenticate(consumer, credential)
   kong.service.request.set_header("x-consumer-id", consumer.id)
 ]]
@@ -27,9 +28,26 @@ for _, strategy in helpers.each_strategy() do
     setup(function()
       local bp, db = helpers.get_db_utils(strategy, nil, {plugin_name})
 
+      consumer = db.consumers:insert({username = "client"})
+      credential = db[schema_name]:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
+      db[schema_name]:insert(get_audience_credential(true, {consumer = {id = consumer.id}}))
+      db[schema_name]:insert({
+        consumer = {id = consumer.id},
+        audience = env.oauth2_client_audience_invalid_iss,
+        issuer = "https://other.idp.tld/",
+        client_id = env.oauth2_client_id
+      })
+      db[schema_name]:insert({
+        consumer = {id = consumer.id},
+        audience = env.oauth2_client_audience_invalid_client_id,
+        issuer = env.idp_opaque_issuer,
+        client_id = 'other-client'
+      })
+
+      anonymous = db.consumers:insert({username = "anonymous"})
+
       local route = bp.routes:insert({hosts = {'oauth2.com'}})
       bp.plugins:insert({name = plugin_name, route = {id = route.id}, config = get_plugin_config()})
-
       local route1 = bp.routes:insert({hosts = {'oauth2-jwt.com'}})
       bp.plugins:insert({name = plugin_name, route = {id = route1.id}, config = get_plugin_config(true)})
 
@@ -39,7 +57,6 @@ for _, strategy in helpers.each_strategy() do
         route = {id = route2.id},
         config = get_plugin_config(false, {issuer = env.idp_opaque_issuer_alias})
       })
-
       local route3 = bp.routes:insert({hosts = {'alias.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
@@ -53,7 +70,6 @@ for _, strategy in helpers.each_strategy() do
         route = {id = route4.id},
         config = get_plugin_config(false, {audience_prefix = env.idp_kong_audience_prefix})
       })
-
       local route5 = bp.routes:insert({hosts = {'prefixed.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
@@ -74,52 +90,48 @@ for _, strategy in helpers.each_strategy() do
         config = get_plugin_config(true, {jwt_introspection = true, introspection_cache_max_ttl = 0.001})
       })
 
-      local route8 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
+      local route8 = bp.routes:insert({hosts = {'hidden.oauth2.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route8.id},
-        config = get_plugin_config(true, {jwt_introspection = true})
+        config = get_plugin_config(false, {hide_credentials = true})
       })
-
-      consumer = db.consumers:insert({username = "client"})
-      credential = db[schema_name]:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
-      db[schema_name]:insert(get_audience_credential(true, {consumer = {id = consumer.id}}))
-      db[schema_name]:insert({
-        consumer = {id = consumer.id},
-        audience = env.oauth2_client_audience_invalid_iss,
-        issuer = "https://other.idp.tld/",
-        client_id = env.oauth2_client_id
-      })
-      db[schema_name]:insert({
-        consumer = {id = consumer.id},
-        audience = env.oauth2_client_audience_invalid_client_id,
-        issuer = env.idp_opaque_issuer,
-        client_id = 'other-client'
-      })
-
-      anonymous = db.consumers:insert({username = "anonymous"})
-      local route9 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      local route9 = bp.routes:insert({hosts = {'hidden.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route9.id},
-        config = get_plugin_config(false, {anonymous = anonymous.id})
+        config = get_plugin_config(true, {hide_credentials = true})
       })
-      local route10 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+
+      local route10 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route10.id},
+        config = get_plugin_config(true, {jwt_introspection = true})
+      })
+
+      local route11 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route11.id},
+        config = get_plugin_config(false, {anonymous = anonymous.id})
+      })
+      local route12 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route12.id},
         config = get_plugin_config(false, {anonymous = consumer.id})
       })
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route10.id},
+        route = {id = route12.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
-      local route11 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
-      bp.plugins:insert({name = plugin_name, route = {id = route11.id}, config = get_plugin_config()})
+      local route13 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
+      bp.plugins:insert({name = plugin_name, route = {id = route13.id}, config = get_plugin_config()})
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route11.id},
+        route = {id = route13.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
 
@@ -146,6 +158,7 @@ for _, strategy in helpers.each_strategy() do
       local host_prefixed = is_jwt and 'prefixed.oauth2-jwt.com' or 'prefixed.oauth2.com'
       local host_short_ttl = is_jwt and 'short-ttl.oauth2-jwt.com' or 'short-ttl.oauth2.com'
       local host_introspected = is_jwt and 'introspected.oauth2-jwt.com' or 'oauth2.com'
+      local host_hidden = is_jwt and 'hidden.oauth2-jwt.com' or 'hidden.oauth2.com'
 
       describe('when no access token is given', function()
         it('respond with 401', function()
@@ -232,6 +245,33 @@ for _, strategy in helpers.each_strategy() do
           assert.equal(consumer.id, h)
           h = assert.request(r).has.header('x-authenticated-audience')
           assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+
+          h = assert.request(r).has.header('authorization')
+          assert.equal('bearer ' .. token, h)
+        end)
+      end)
+
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match credential and credential hidden', function()
+        it('respond with 200', function()
+          local token = fetch_token(is_jwt)
+          local r = proxy_client:get('/request', {headers = {['Host'] = host_hidden, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(200)
+
+          local h
+          h = assert.request(r).has.header('x-oauth2-issuer')
+          assert.equal(is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer, h)
+          h = assert.request(r).has.header('x-oauth2-client')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-oauth2-subject')
+          assert.equal(env.oauth2_client_id, h)
+
+          h = assert.request(r).has.header('x-consumer-id')
+          assert.equal(consumer.id, h)
+          h = assert.request(r).has.header('x-authenticated-audience')
+          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+
+          local body = cjson.decode(assert.res_status(200, r))
+          assert.is_nil(body.headers.authorization)
         end)
       end)
 
@@ -255,6 +295,9 @@ for _, strategy in helpers.each_strategy() do
           assert.equal(consumer.id, h)
           h = assert.request(r).has.header('x-authenticated-audience')
           assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+
+          h = assert.request(r).has.header('authorization')
+          assert.equal('bearer ' .. token, h)
         end)
       end)
 
