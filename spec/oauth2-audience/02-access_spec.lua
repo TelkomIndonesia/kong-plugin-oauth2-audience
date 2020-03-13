@@ -12,10 +12,17 @@ local get_audience_credential = oauth2_server.get_audience_credential
 local fetch_token = oauth2_server.fetch_token
 local revoke = oauth2_server.revoke
 
+local pre_auth_simulation = [[
+  local consumer = {id = "%s"}
+  local credential = {id="%s"}
+  kong.client.authenticate(consumer, credential)
+  kong.service.request.set_header("x-consumer-id", consumer.id)
+]]
+
 for _, strategy in helpers.each_strategy() do
   describe('Plugin: ' .. plugin_name .. ' (Access) [#' .. strategy .. ']', function()
     local proxy_client
-    local consumer
+    local consumer, credential, anonymous
 
     setup(function()
       local bp, db = helpers.get_db_utils(strategy, nil, {plugin_name})
@@ -75,7 +82,7 @@ for _, strategy in helpers.each_strategy() do
       })
 
       consumer = db.consumers:insert({username = "client"})
-      db[schema_name]:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
+      credential = db[schema_name]:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
       db[schema_name]:insert(get_audience_credential(true, {consumer = {id = consumer.id}}))
       db[schema_name]:insert({
         consumer = {id = consumer.id},
@@ -88,6 +95,32 @@ for _, strategy in helpers.each_strategy() do
         audience = env.oauth2_client_audience_invalid_client_id,
         issuer = env.idp_opaque_issuer,
         client_id = 'other-client'
+      })
+
+      anonymous = db.consumers:insert({username = "anonymous"})
+      local route9 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route9.id},
+        config = get_plugin_config(false, {anonymous = anonymous.id})
+      })
+      local route10 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route10.id},
+        config = get_plugin_config(false, {anonymous = consumer.id})
+      })
+      bp.plugins:insert({
+        name = 'pre-function',
+        route = {id = route10.id},
+        config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
+      })
+      local route11 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
+      bp.plugins:insert({name = plugin_name, route = {id = route11.id}, config = get_plugin_config()})
+      bp.plugins:insert({
+        name = 'pre-function',
+        route = {id = route11.id},
+        config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
 
       assert(helpers.start_kong({database = strategy, plugins = 'bundled,' .. plugin_name, nginx_conf = spec_nginx_conf}))
@@ -309,6 +342,31 @@ for _, strategy in helpers.each_strategy() do
           revoke(true, token)
         end
 
+      end)
+    end)
+
+    describe('when anonymous is set and can\'t be authenticated via oauth2-audience ', function()
+      it('authenticate as anonymous consumer', function()
+        local r = proxy_client:get('/request', {headers = {['Host'] = "anonymous.oauth2.com"}})
+        assert.response(r).has.status(200)
+        local h = assert.request(r).has.header('x-consumer-id')
+        assert.equal(anonymous.id, h)
+      end)
+    end)
+
+    describe('when anonymous is set and already authenticated by other plugin', function()
+      it('authenticate as anonymous consumer', function()
+        local r = proxy_client:get('/request', {headers = {['Host'] = "authenticated.oauth2.com"}})
+        assert.response(r).has.status(200)
+        local h = assert.request(r).has.header('x-consumer-id')
+        assert.equal(consumer.id, h)
+      end)
+    end)
+
+    describe('when anonymous is not set despite already authenticated by other plugin', function()
+      it('respond with 401', function()
+        local r = proxy_client:get('/request', {headers = {['Host'] = "multiple-auth.oauth2.com"}})
+        assert.response(r).has.status(401)
       end)
     end)
 
