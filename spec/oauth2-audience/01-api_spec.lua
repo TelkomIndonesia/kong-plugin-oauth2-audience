@@ -1,14 +1,16 @@
 local cjson = require "cjson"
-local helpers = require "spec.helpers"
+local ngx = require('ngx')
+
 local utils = require "kong.tools.utils"
+local helpers = require "spec.helpers"
+local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
+
 local plugin_name = 'oauth2-audience'
 local schema_name = 'oauth2_audiences'
 local api_name = 'oauth2-audiences'
-local spec_nginx_conf = 'spec/fixtures/custom_nginx.template'
-local ngx = require('ngx')
 
 for _, strategy in helpers.each_strategy() do
-  describe("Plugin: oauth2-audience (API) [#" .. strategy .. "]", function()
+  describe('Plugin: ' .. plugin_name .. ' (API) [#' .. strategy .. ']', function()
     local consumer
     local admin_client
     local bp
@@ -146,7 +148,7 @@ for _, strategy in helpers.each_strategy() do
         describe("GET", function()
           setup(function()
             for i = 1, 3 do
-              assert(db.oauth2_audiences:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'})
+              assert(db[schema_name]:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'})
             end
           end)
           teardown(function()
@@ -165,11 +167,8 @@ for _, strategy in helpers.each_strategy() do
         describe("GET #ttl", function()
           setup(function()
             for i = 1, 3 do
-              assert(db.oauth2_audiences:insert({
-                consumer = {id = consumer.id},
-                issuer = "https://idp.jwt",
-                client_id = 'client'
-              }, {ttl = 10}))
+              assert(db[schema_name]:insert({consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'},
+                                            {ttl = 10}))
             end
           end)
           teardown(function()
@@ -196,7 +195,7 @@ for _, strategy in helpers.each_strategy() do
       local credential
       before_each(function()
         db:truncate(schema_name)
-        credential = db.oauth2_audiences:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
+        credential = db[schema_name]:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
       end)
 
       describe("GET", function()
@@ -228,7 +227,7 @@ for _, strategy in helpers.each_strategy() do
         end)
 
         it("oauth2-audience contains #ttl", function()
-          local credential = db.oauth2_audiences:insert({
+          local credential = db[schema_name]:insert({
             consumer = {id = consumer.id},
             issuer = "https://idp.jwt",
             client_id = 'client'
@@ -343,12 +342,12 @@ for _, strategy in helpers.each_strategy() do
           db:truncate(schema_name)
 
           for i = 1, 3 do
-            db.oauth2_audiences:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
+            db[schema_name]:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
           end
 
           consumer2 = db.consumers:insert{username = "bob-the-buidler"}
           for i = 1, 3 do
-            db.oauth2_audiences:insert{consumer = {id = consumer2.id}, issuer = "https://idp.jwt", client_id = 'client2'}
+            db[schema_name]:insert{consumer = {id = consumer2.id}, issuer = "https://idp.jwt", client_id = 'client2'}
           end
         end)
 
@@ -418,7 +417,7 @@ for _, strategy in helpers.each_strategy() do
       end)
     end)
 
-    describe("/" .. plugin_name .. "/:audience_or_id", function()
+    describe("/" .. api_name .. "/:audience_or_id", function()
       local path = string.format("/%s/", api_name)
 
       describe("PUT", function()
@@ -452,18 +451,14 @@ for _, strategy in helpers.each_strategy() do
       end)
     end)
 
-    describe("/" .. plugin_name .. "/:audience_or_id/consumer", function()
+    describe("/" .. api_name .. "/:audience_or_id/consumer", function()
       local path = string.format("/%s/", api_name)
 
       describe("GET", function()
         local credential
         setup(function()
           db:truncate(schema_name)
-          credential = db.oauth2_audiences:insert{
-            consumer = {id = consumer.id},
-            issuer = "https://idp.jwt",
-            client_id = 'client'
-          }
+          credential = db[schema_name]:insert{consumer = {id = consumer.id}, issuer = "https://idp.jwt", client_id = 'client'}
         end)
 
         it("retrieve Consumer from a credential's id", function()
