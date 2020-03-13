@@ -54,11 +54,24 @@ for _, strategy in helpers.each_strategy() do
         config = get_plugin_config(true, {audience_prefix = env.idp_kong_audience_prefix})
       })
 
-      local route6 = bp.routes:insert({hosts = {'oauth2-jwt-introspect.com'}})
+      local route6 = bp.routes:insert({hosts = {'short-ttl.oauth2.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route6.id},
+        config = get_plugin_config(false, {introspection_cache_max_ttl = 0.001})
+      })
+      local route7 = bp.routes:insert({hosts = {'short-ttl.oauth2-jwt.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route7.id},
         config = get_plugin_config(true, {jwt_introspection = true, introspection_cache_max_ttl = 0.001})
+      })
+
+      local route8 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route8.id},
+        config = get_plugin_config(true, {jwt_introspection = true})
       })
 
       consumer = db.consumers:insert({username = "client"})
@@ -98,6 +111,8 @@ for _, strategy in helpers.each_strategy() do
       local host = is_jwt and 'oauth2-jwt.com' or 'oauth2.com'
       local host_alias = is_jwt and 'alias.oauth2-jwt.com' or 'alias.oauth2.com'
       local host_prefixed = is_jwt and 'prefixed.oauth2-jwt.com' or 'prefixed.oauth2.com'
+      local host_short_ttl = is_jwt and 'short-ttl.oauth2-jwt.com' or 'short-ttl.oauth2.com'
+      local host_introspected = is_jwt and 'introspected.oauth2-jwt.com' or 'oauth2.com'
 
       describe('when no access token is given', function()
         it('respond with 401', function()
@@ -108,7 +123,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token is invalid', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token is invalid', function()
         it('respond with 401', function()
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['authorization'] = 'bearer 12345'}})
           assert.response(r).has.status(401)
@@ -118,7 +133,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid but plugin\'s issuer did not match', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but plugin\'s issuer did not match', function()
         it('respond with 401', function()
           local token = fetch_token(is_jwt)
           local r = proxy_client:get('/request', {headers = {['Host'] = host_alias, ['Authorization'] = 'bearer ' .. token}})
@@ -130,7 +145,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid but unregistered audience', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but unregistered audience', function()
         it('respond with 401', function()
           local token = fetch_token(is_jwt, env.oauth2_client_audience_unregisted)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -142,7 +157,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid but client_id did not match', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but client_id did not match', function()
         it('respond with 401', function()
           local token = fetch_token(is_jwt, env.oauth2_client_audience_invalid_client_id)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -154,7 +169,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token valid but issuer did not match', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but issuer did not match', function()
         it('respond with 401', function()
           local token = fetch_token(is_jwt, env.oauth2_client_audience_invalid_iss)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -166,7 +181,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match credential', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match credential', function()
         it('respond with 200', function()
           local token = fetch_token(is_jwt)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -187,7 +202,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match prefixed credential', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match prefixed credential', function()
         it('respond with 200', function()
           local audience = env.idp_kong_audience_prefix ..
                              (is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)
@@ -210,7 +225,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token not match prefixed credential', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token did not match prefixed credential', function()
         it('respond with 200', function()
           local token = fetch_token(is_jwt)
           local r = proxy_client:get('/request', {headers = {['Host'] = host_prefixed, ['Authorization'] = 'bearer ' .. token}})
@@ -222,7 +237,7 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match credential but scope insuficient', function()
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match credential but scope insuficient', function()
         it('respond with 403', function()
           local token = fetch_token(is_jwt, nil, env.oauth2_client_scope_unrequired)
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -234,8 +249,8 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
-      describe('when ' .. (is_jwt and 'jwt' or '') ..
-                 ' access token match credential but required audiences missing insuficient', function()
+      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match credential but required audiences are missing',
+               function()
         it('respond with 403', function()
           local token = fetch_token(is_jwt, {is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience})
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
@@ -246,20 +261,54 @@ for _, strategy in helpers.each_strategy() do
           assert.is_not_nil(v:find('error_description="missing one or more required audiences"'), v)
         end)
       end)
+
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but revoked after cache expire', function()
+        it('respond with 401', function()
+          local token = fetch_token(is_jwt)
+
+          for i = 1, 2 do
+            local r = proxy_client:get('/request',
+                                       {headers = {['Host'] = host_short_ttl, ['Authorization'] = 'bearer ' .. token}})
+            assert.response(r).has.status(200)
+            ngx.sleep(0.5)
+          end
+
+          -- revoke
+          revoke(is_jwt, token)
+          local r =
+            proxy_client:get('/request', {headers = {['Host'] = host_short_ttl, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(401)
+        end)
+      end)
+
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but revoked before cache expire', function()
+        it('respond with 401', function()
+          local token = fetch_token(is_jwt)
+
+          for i = 1, 3 do
+            local r = proxy_client:get('/request',
+                                       {headers = {['Host'] = host_introspected, ['Authorization'] = 'bearer ' .. token}})
+            assert.response(r).has.status(200)
+            ngx.sleep(0.5)
+            revoke(is_jwt, token)
+          end
+
+        end)
+      end)
     end
 
-    describe('when jwt access token valid but jwt_introspection=true', function()
-      it('use introspection response', function()
+    describe('when jwt access token valid and revoked before cache expire but without jwt_introspection', function()
+      it('does not introspect the token', function()
         local token = fetch_token(true)
-        local r = proxy_client:get('/request',
-                                   {headers = {['Host'] = 'oauth2-jwt-introspect.com', ['Authorization'] = 'bearer ' .. token}})
-        assert.response(r).has.status(200)
-        ngx.sleep(0.001) -- exhaust the cache
+        local host = 'oauth2-jwt.com'
 
-        revoke(true, token)
-        r = proxy_client:get('/request',
-                             {headers = {['Host'] = 'oauth2-jwt-introspect.com', ['Authorization'] = 'bearer ' .. token}})
-        assert.response(r).has.status(401)
+        for i = 1, 3 do
+          local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(200)
+          ngx.sleep(0.5)
+          revoke(true, token)
+        end
+
       end)
     end)
 
