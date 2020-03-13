@@ -3,7 +3,7 @@ local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 
 local auth_method = {'client_secret_basic', 'client_secret_post', 'private_key_jwt', 'client_secret_jwt'}
 local sign_algorithm = {'HS256', 'HS512', 'RS256'}
-local claim_header_map = {client_id = 'x-authenticated-client', sub = 'x-authenticated-user'}
+local claim_header_map = {iss = 'x-oauth2-issuer', client_id = 'x-oauth2-client', sub = 'x-oauth2-subject'}
 
 return {
   name = plugin_name,

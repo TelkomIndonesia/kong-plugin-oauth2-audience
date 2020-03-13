@@ -172,14 +172,41 @@ for _, strategy in helpers.each_strategy() do
           local r = proxy_client:get('/request', {headers = {['Host'] = host, ['Authorization'] = 'bearer ' .. token}})
           assert.response(r).has.status(200)
 
-          local h = assert.request(r).has.header('x-authenticated-client')
+          local h
+          h = assert.request(r).has.header('x-oauth2-issuer')
+          assert.equal(is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer, h)
+          h = assert.request(r).has.header('x-oauth2-client')
           assert.equal(env.oauth2_client_id, h)
-          h = assert.request(r).has.header('x-authenticated-user')
+          h = assert.request(r).has.header('x-oauth2-subject')
           assert.equal(env.oauth2_client_id, h)
-          h = assert.request(r).has.header('x-authenticated-audience')
-          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+
           h = assert.request(r).has.header('x-consumer-id')
           assert.equal(consumer.id, h)
+          h = assert.request(r).has.header('x-authenticated-audience')
+          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
+        end)
+      end)
+
+      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match prefixed credential', function()
+        it('respond with 200', function()
+          local audience = env.idp_kong_audience_prefix ..
+                             (is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)
+          local token = fetch_token(is_jwt, audience)
+          local r = proxy_client:get('/request', {headers = {['Host'] = host_prefixed, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(200)
+
+          local h
+          h = assert.request(r).has.header('x-oauth2-issuer')
+          assert.equal(is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer, h)
+          h = assert.request(r).has.header('x-oauth2-client')
+          assert.equal(env.oauth2_client_id, h)
+          h = assert.request(r).has.header('x-oauth2-subject')
+          assert.equal(env.oauth2_client_id, h)
+
+          h = assert.request(r).has.header('x-consumer-id')
+          assert.equal(consumer.id, h)
+          h = assert.request(r).has.header('x-authenticated-audience')
+          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
         end)
       end)
 
@@ -192,25 +219,6 @@ for _, strategy in helpers.each_strategy() do
           assert.equal(1, v:find('Bearer realm="service"'), v)
           assert.is_not_nil(v:find('error="invalid_token"'), v)
           assert.is_not_nil(v:find('error_description="missing suitable audience in access token metadata"'), v)
-        end)
-      end)
-
-      describe('when ' .. (is_jwt and 'jwt' or '') .. ' access token match prefixed credential', function()
-        it('respond with 200', function()
-          local audience = env.idp_kong_audience_prefix ..
-                             (is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience)
-          local token = fetch_token(is_jwt, audience)
-          local r = proxy_client:get('/request', {headers = {['Host'] = host_prefixed, ['Authorization'] = 'bearer ' .. token}})
-          assert.response(r).has.status(200)
-
-          local h = assert.request(r).has.header('x-authenticated-client')
-          assert.equal(env.oauth2_client_id, h)
-          h = assert.request(r).has.header('x-authenticated-user')
-          assert.equal(env.oauth2_client_id, h)
-          h = assert.request(r).has.header('x-authenticated-audience')
-          assert.equal(is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience, h)
-          h = assert.request(r).has.header('x-consumer-id')
-          assert.equal(consumer.id, h)
         end)
       end)
 
