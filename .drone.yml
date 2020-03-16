@@ -1,45 +1,6 @@
 ---
-kind: secret
-name: sonar_url
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: sonar_url
-
----
-kind: secret
-name: sonar_token
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: sonar_token
-
----
-kind: secret
-name: elasticsearch_url
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: elasticsearch_url
-
----
-kind: secret
-name: elasticsearch_username
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: elasticsearch_username
-
----
-kind: secret
-name: elasticsearch_password
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: elasticsearch_password
-
----
 kind: pipeline
 name: default
-
-workspace:
-  base: /drone
-  path: /src/git.rucciva.one/mainapi/kong-plugin-header
 
 services:
   - name: postgres
@@ -47,6 +8,14 @@ services:
     environment:
       POSTGRES_DB: kong
       POSTGRES_USER: kong
+
+  - name: cassandra
+    image: cassandra:3.11
+    environment:
+      CASSANDRA_CLUSTER_NAME: kong
+      CASSANDRA_DC: DC1
+      CASSANDRA_RACK: RACK1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
 
 steps:
   - name: wait postgres
@@ -57,70 +26,167 @@ steps:
         do 
           sleep 1; 
         done
+
+  - name: wait cassandra
+    image: cassandra:3.11
+    commands:
+      - until cqlsh cassandra; do sleep 1; done
   
   - name: migrate
     image: kong:2.0.1-alpine
     environment:
-      KONG_DATABASE: postgres
       KONG_PG_HOST: postgres
       KONG_PG_DATABASE: kong
+      KONG_CASSANDRA_CONTACT_POINTS: cassandra
+      KONG_CASSANDRA_DATA_CENTERS: DC1:1
+      KONG_CASSANDRA_REPL_STRATEGY: NetworkTopologyStrategy
+      KONG_CASSANDRA_LOCAL_DATACENTER: DC1
     commands: 
-      - kong migrations bootstrap
-      - kong migrations up
-      - kong migrations finish
+      - KONG_DATABASE=postgres kong migrations bootstrap
+      - KONG_DATABASE=cassandra kong migrations bootstrap
+  
+  - name: hydra
+    image: oryd/hydra:v1.3.2-alpine
+    detach: true
+    environment:
+      URLS_SELF_ISSUER: https://hydra.tld/
+      URLS_CONSENT: http://notexist.tld/consent
+      URLS_LOGIN: http://notexist.tld/login
+      URLS_LOGOUT: http://notexist.tld/logout
+      DSN: memory
+      SECRETS_SYSTEM: youReallyNeedToChangeThis
+    commands:
+      - hydra serve all --dangerous-force-http
+  
+  - name: hydra_jwt
+    image: oryd/hydra:v1.3.2-alpine
+    detach: true
+    environment:
+      URLS_SELF_ISSUER: https://hydra-jwt.tld/
+      URLS_CONSENT: http://notexist.tld/consent
+      URLS_LOGIN: http://notexist.tld/login
+      URLS_LOGOUT: http://notexist.tld/logout
+      DSN: memory
+      SECRETS_SYSTEM: youReallyNeedToChangeThis
+      STRATEGIES_ACCESS_TOKEN: jwt
+    commands:
+      - hydra serve all --dangerous-force-http
+   
+  - name: hydra.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra:4444'
+  
+  - name: alias.hydra.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra:4444'
+  
+  - name: admin.hydra.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra:4445'
+
+  - name: hydra-jwt.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra_jwt:4444'
+  
+  - name: alias.hydra-jwt.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra_jwt:4444'
+  
+  - name: admin.hydra-jwt.tld
+    image: abiosoft/caddy:0.11.1
+    detach: true
+    commands: 
+      - caddy -port 443 'tls self_signed' 'proxy / hydra_jwt:4445'
+  
+  - name: create oauth2 client
+    image: appropriate/curl
+    environment:
+      CONTENT_TYPE: "content-type: application/json"
+      CLIENT: 
+        '{
+            "client_name": "client",
+            "client_id": "client",
+            "client_secret": "client",
+            "scope": "openid profile admin phone email address unrequired",
+            "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
+            "response_types": [ "token", "code", "id_token" ],
+            "redirect_uris": ["https://notexist.tld/callback"],
+            "audience": ["client", "apim:client",  "https://some-api.tld/some-resource", "unregistered", "registered-for-another-issuer", "registered-by-another-client"]
+        }'
+      CLIENT_JWT: 
+        '{
+            "client_name": "client",
+            "client_id": "client",
+            "client_secret": "client",
+            "scope": "openid profile admin phone email address unrequired",
+            "grant_types": [ "authorization_code", "refresh_token", "client_credentials", "implicit" ],
+            "response_types": [ "token", "code", "id_token" ],
+            "redirect_uris": ["https://notexist.tld/callback"],
+            "audience": ["client-jwt", "apim:client-jwt",  "https://some-api.tld/some-resource", "unregistered", "registered-for-another-issuer", "registered-by-another-client"]
+        }'
+    commands: 
+      - export url="https://admin.hydra.tld"
+      - until curl -sfk $$url/clients > /dev/zero; do sleep 1; done
+      - curl -sfk -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT" ||
+          curl -sfk -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT"
+        
+      - export url="https://admin.hydra-jwt.tld"
+      - until curl -sfk $$url/clients > /dev/zero; do sleep 1; done
+      - curl -sfk -X POST -H "$$CONTENT_TYPE" "$$url/clients" -d "$$CLIENT_JWT" ||
+          curl -sfk -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT_JWT"
     
   - name: test
     image: rucciva/kong-dev-onbuild:2.0.1
     pull: true
     environment:
-      SPEC_KONG_DATABASE: postgres
       SPEC_KONG_PG_HOST: postgres
       SPEC_KONG_PG_DATABASE: kong
-      SPEC_KONG_LOG_LEVEL: debug
-      SPEC_KONG_DNS_RESOLVER: 
+      SPEC_KONG_CASSANDRA_CONTACT_POINTS: cassandra
+      SPEC_KONG_CASSANDRA_DATA_CENTERS: DC1:1
+      SPEC_KONG_CASSANDRA_REPL_STRATEGY: NetworkTopologyStrategy
+      SPEC_KONG_CASSANDRA_LOCAL_DATACENTER: DC1
+      SPEC_KONG_LOG_LEVEL: info
+      SPEC_KONG_DNS_RESOLVER: ""
       SPEC_KONG_PROXY_ACCESS_LOG: /proc/1/fd/1
       SPEC_KONG_PROXY_ERROR_LOG: /proc/1/fd/2
-      SPEC_KONG_ADMIN_ACCESS_LOG: /proc/1/fd/2
+      SPEC_KONG_ADMIN_ACCESS_LOG: /proc/1/fd/1
       SPEC_KONG_ADMIN_ERROR_LOG: /proc/1/fd/2
-      SPEC_PROXY_TIMEOUT: 100000
+      
+      IDP_OPAQUE_ISSUER: https://hydra.tld/
+      IDP_OPAQUE_ISSUER_ALIAS: https://alias.hydra.tld/
+      IDP_OPAQUE_INTROSPECTION_ENDPOINT: https://admin.hydra.tld/oauth2/introspect
+      IDP_OPAQUE_TOKEN_ENDPOINT: https://hydra.tld/oauth2/token
+      IDP_OPAQUE_REVOKE_ENDPOINT: https://hydra.tld/oauth2/revoke
+      IDP_JWT_ISSUER: https://hydra-jwt.tld/
+      IDP_JWT_ISSUER_ALIAS: https://alias.hydra-jwt.tld/
+      IDP_JWT_INTROSPECTION_ENDPOINT: https://admin.hydra-jwt.tld/oauth2/introspect
+      IDP_JWT_TOKEN_ENDPOINT: https://hydra-jwt.tld/oauth2/token
+      IDP_JWT_REVOKE_ENDPOINT: https://hydra-jwt.tld/oauth2/revoke
+      IDP_KONG_AUDIENCE_PREFIX: 'apim:'
+      OAUTH2_CLIENT_ID: client
+      OAUTH2_CLIENT_SECRET: client
+      OAUTH2_CLIENT_AUDIENCE: client
+      OAUTH2_JWT_CLIENT_AUDIENCE: client-jwt
+      OAUTH2_CLIENT_SCOPE: openid profile admin phone email address
+      OAUTH2_CLIENT_AUDIENCE_EXISTING: https://some-api.tld/some-resource
+      OAUTH2_CLIENT_AUDIENCE_UNREGISTED: unregistered
+      OAUTH2_CLIENT_AUDIENCE_INVALID_ISS: registered-for-another-issuer
+      OAUTH2_CLIENT_AUDIENCE_INVALID_CLIENT_ID: registered-by-another-client
+      OAUTH2_CLIENT_SCOPE_UNREQUIRED: unrequired
     commands:
       - /entrypoint.sh echo
-      - ln -s $$DRONE_WORKSPACE/kong/plugins/oauth2-token-audience /usr/local/src/kong/kong/plugins/oauth2-token-audience
-      - ln -s $$DRONE_WORKSPACE/spec/oauth2-token-audience /usr/local/src/kong/spec/oauth2-token-audience
+      - cat /usr/local/src/kong/spec/kong_tests.conf
+      - ln -s $$DRONE_WORKSPACE/kong/plugins/oauth2-audience /usr/local/src/kong/kong/plugins/oauth2-audience
+      - ln -s $$DRONE_WORKSPACE/spec/oauth2-audience /usr/local/src/kong/spec/oauth2-audience
       - luarocks make
-      - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-token-audience
-  
-  - name: analyze code using sonarqube
-    image: rucciva/drone-sonar-plugin:0.0.4
-    settings:
-      url:
-        from_secret: sonar_url
-      token:
-        from_secret: sonar_token
-      add_branch_prefix: "true"
-    when:
-      status:
-      - success
-      - failure
-
-  - name: publish build record
-    image: rucciva/drone-elasticsearch-plugin:0.0.2
-    pull: always
-    settings:
-      url:
-        from_secret: elasticsearch_url
-      username:
-        from_secret: elasticsearch_username
-      password:
-        from_secret: elasticsearch_password
-      index: drone    
-      index_postfix_command: date -d @`echo $DRONE_JOB_STARTED` +-%Y
-    when:
-      status:
-        - success
-        - failure
----
-kind: signature
-hmac: af60cc0a20b41ddbae26f349479c91d2630e1ad70ec8fdfd3dbe1e46b82af5f6
-
-...
+      - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience

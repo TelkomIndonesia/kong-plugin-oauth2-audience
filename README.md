@@ -1,13 +1,10 @@
-# Kong plugin template
+# Kong Plugin OAuth2 Audience
 
-_Forked from *[kong-plugin github repository](https://github.com/Kong/kong-plugin)*_
+Oauth2 authentication using external oauth2 server which able to associate external oauth2 client with kong's consumer by using audience claim.
 
-This repository contains a very simple Kong plugin template to get you
-up and running quickly using **Docker** for developing your own plugins.
+## Change the plugin name or version
 
-## Renaming the plugin
-
-To change the current plugin name, use the rename.sh script. Note that the default current plugin name of this repository is `myplugin`
+To change the current plugin name or version, use the rename.sh script.
 
 ```bash
 chmod +x ./rename.sh && ./rename.sh <current_plugin_name> <new_plugin_name> [<new_plugin_version>]
@@ -23,53 +20,13 @@ docker run \
     -w /tmp/rename \
     --entrypoint /bin/bash \
     debian:stretch-slim \
-    -c "chmod +x ./rename.sh && ./rename.sh <current_plugin_name> <new_plugin_name> [<new_plugin_version>]"
+    -c "chmod +x ./rename.sh && ./rename.sh oauth2-audience <new_plugin_name> [<new_plugin_version>]"
 ```
 
-## Preparation
-
-The following command should be run manually once before using `kong` or `kong_busted` service. Note that after `postgres` service have been started successfuly (by examining the output of *docker-compose logs postgres*), press **ctrl+c** to exit from *docker-compose logs postgres* and start the `migrator`
+## Test
 
 ```bash
-docker-compose up -d postgres && \
-docker-compose logs -f postgres; \
-docker-compose up migrator
-```
-
-## Runing kong service
-
-the following is an example how to run the `kong` service, add an api that point to mockbin.org, and invoke the api
-
-```bash
-docker-compose up --build -d kong && docker-compose logs -f kong
-
-# add mockbin API
-curl -i -X PUT \
-  --url http://localhost:8001/services/18f68371-726a-4e25-a7c9-bf012d096d85 \
-  --data "protocol=http" \
-  --data "host=mockbin.org" \
-  --data "port=80" \
-  --data "path=/request"
-
-curl -i -X PUT \
-  --url http://localhost:8001/routes/1a5cc9b8-046a-4b47-a2a3-d0614004fc73 \
-  --data "paths[]=/" \
-  --data "service.id=18f68371-726a-4e25-a7c9-bf012d096d85"
-
-
-# add mobdebug plugin
-curl -i -X POST \
-  --url http://localhost:8001/plugins/ \
-  --data "name=mobdebug" \
-  --data "route_id=1a5cc9b8-046a-4b47-a2a3-d0614004fc73"
-
-# add your plugin
-curl -i -X POST \
-  --url http://localhost:8001/plugins/ \
-  --data 'name=myplugin'
-
-# try the mockbin API
-curl -i http://localhost:8000
+docker-compose up busted
 ```
 
 ## Debugging via zerobrane
