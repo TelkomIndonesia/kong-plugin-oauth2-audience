@@ -42,6 +42,21 @@ local function tokenize(req, token, location)
   return req
 end
 
+local function assert_www_authenticate_header(res, realm, err, description)
+  local v = assert.response(res).has.header('www-authenticate')
+  assert.equal(1, v:find(string.format('Bearer realm="%s"', realm)), v)
+  if err then
+    assert.is_not_nil(v:find(string.format('error="%s"', err)), v)
+  else
+    assert.is_nil(v:find('error='), v)
+  end
+  if description then
+    assert.is_not_nil(v:find(string.format('error_description="%s"', description)), v)
+  else
+    assert.is_nil(v:find('error_description='), v)
+  end
+end
+
 local function assert_upstream_credential(res, token, location)
   if string.lower(location or '') == 'query' then
     local h = assert.request(res).has.queryparam('access_token')
@@ -215,8 +230,7 @@ for _, strategy in helpers.each_strategy() do
         it('respond with 401', function()
           local r = proxy_client:get('/request', {headers = {['Host'] = host}})
           assert.response(r).has.status(401)
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal('Bearer realm="service"', v)
+          assert_www_authenticate_header(r, 'service')
         end)
       end)
 
@@ -226,10 +240,7 @@ for _, strategy in helpers.each_strategy() do
             local req = {headers = {['Host'] = host}}
             local r = proxy_client:get('/request', tokenize(req, 12345, location))
             assert.response(r).has.status(401)
-
-            local v = assert.response(r).has.header('www-authenticate')
-            assert.equal(1, v:find('Bearer realm="service"'), v)
-            assert.is_not_nil(v:find('error="invalid_token"'), v)
+            assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid or expired access token')
           end)
         end)
       end
@@ -240,11 +251,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host_alias}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="invalid issuer"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid issuer')
         end)
       end)
 
@@ -255,11 +262,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host_discovery_disabled}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="invalid issuer"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid issuer')
         end)
       end)
 
@@ -269,11 +272,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="invalid audience"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid audience')
         end)
       end)
 
@@ -283,11 +282,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="invalid client_id for the given audience"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid client_id for the given audience')
         end)
       end)
 
@@ -297,11 +292,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="invalid issuer for the given audience"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid issuer for the given audience')
         end)
       end)
 
@@ -394,10 +385,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host_prefixed}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="invalid_token"'), v)
-          assert.is_not_nil(v:find('error_description="missing suitable audience in access token metadata"'), v)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'missing suitable audience in access token metadata')
         end)
       end)
 
@@ -407,10 +395,7 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(403)
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="insufficient_scope"'), v)
-          assert.is_not_nil(v:find('error_description="missing one or more required scope"'), v)
+          assert_www_authenticate_header(r, 'service', 'insufficient_scope', 'missing one or more required scope')
         end)
       end)
 
@@ -421,19 +406,16 @@ for _, strategy in helpers.each_strategy() do
           local req = {headers = {['Host'] = host}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(403)
-          local v = assert.response(r).has.header('www-authenticate')
-          assert.equal(1, v:find('Bearer realm="service"'), v)
-          assert.is_not_nil(v:find('error="insufficient_scope"'), v)
-          assert.is_not_nil(v:find('error_description="missing one or more required audiences"'), v)
+          assert_www_authenticate_header(r, 'service', 'insufficient_scope', 'missing one or more required audiences')
         end)
       end)
 
       describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token valid but revoked after cache expire', function()
         it('respond with 401', function()
           local token = fetch_token(is_jwt)
+          local req = {headers = {['Host'] = host_short_ttl}}
 
           for i = 1, 2 do
-            local req = {headers = {['Host'] = host_short_ttl}}
             local r = proxy_client:get('/request', tokenize(req, token))
             assert.response(r).has.status(200)
             ngx.sleep(0.5)
@@ -441,9 +423,9 @@ for _, strategy in helpers.each_strategy() do
 
           -- revoke
           revoke(is_jwt, token)
-          local req = {headers = {['Host'] = host_short_ttl}}
           local r = proxy_client:get('/request', tokenize(req, token))
           assert.response(r).has.status(401)
+          assert_www_authenticate_header(r, 'service', 'invalid_token', 'invalid or expired access token')
         end)
       end)
 
@@ -507,6 +489,7 @@ for _, strategy in helpers.each_strategy() do
         local req = {headers = {['Host'] = "multiple-auth.oauth2.com"}}
         local r = proxy_client:get('/request', req)
         assert.response(r).has.status(401)
+        assert_www_authenticate_header(r, 'service')
       end)
     end)
 
