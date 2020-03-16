@@ -27,6 +27,7 @@ local get_req_query = kong.request.get_query
 local get_req_method = kong.request.get_method
 local get_req_body = kong.request.get_body
 local set_req_header = kong.service.request.set_header
+local set_req_headers = kong.service.request.set_headers
 local set_req_query = kong.service.request.set_query
 local set_req_body = kong.service.request.set_body
 local clear_req_header = kong.service.request.clear_header
@@ -314,6 +315,9 @@ local function set_upstream_headers(conf, consumer, credential, token_metadata)
   if not credential then
     set_req_header(HEADER_ANONYMOUS, true)
     clear_req_header(HEADER_CREDENTIAL)
+    for _, h in pairs(conf.claim_header_map) do
+      clear_req_header(h)
+    end
     return
   end
 
@@ -324,10 +328,10 @@ local function set_upstream_headers(conf, consumer, credential, token_metadata)
     clear_req_header(HEADER_CREDENTIAL)
   end
 
-  for k, n in pairs(conf.claim_header_map) do
-    local v = token_metadata[k]
+  for n, h in pairs(conf.claim_header_map) do
+    local v = token_metadata[n]
     if v then
-      set_req_header(n, v)
+      set_req_headers({[h] = v})
     end
   end
 end

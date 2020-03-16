@@ -43,7 +43,6 @@ return {
           {introspection_client_id = {type = 'string'}},
           {introspection_client_secret = {type = 'string'}},
           {introspection_client_rsa_private_key = typedefs.certificate},
-          {introspection_auth_method = {type = 'string', default = auth_method[1], one_of = auth_method}},
           {introspection_client_rsa_private_key_id = {type = 'string'}},
           {introspection_param_name_token = {type = 'string', default = 'token'}},
           {introspection_params = {type = 'map', keys = {type = 'string'}, values = {type = 'string'}}},
