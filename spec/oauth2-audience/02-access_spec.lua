@@ -103,35 +103,48 @@ for _, strategy in helpers.each_strategy() do
         config = get_plugin_config(true, {hide_credentials = true})
       })
 
-      local route10 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
+      local route10 = bp.routes:insert({hosts = {'discovery-disabled.oauth2.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route10.id},
-        config = get_plugin_config(true, {jwt_introspection = true})
+        config = get_plugin_config(false, {issuer = "https://invalid.tld", oidc_conf_discovery = false})
       })
-
-      local route11 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      local route11 = bp.routes:insert({hosts = {'discovery-disabled.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route11.id},
-        config = get_plugin_config(false, {anonymous = anonymous.id})
+        config = get_plugin_config(true, {issuer = "https://invalid.tld", oidc_conf_discovery = false, jwt_introspection = true})
       })
-      local route12 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+
+      local route12 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route12.id},
+        config = get_plugin_config(true, {jwt_introspection = true})
+      })
+
+      local route13 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route13.id},
+        config = get_plugin_config(false, {anonymous = anonymous.id})
+      })
+      local route14 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route14.id},
         config = get_plugin_config(false, {anonymous = consumer.id})
       })
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route12.id},
+        route = {id = route14.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
-      local route13 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
-      bp.plugins:insert({name = plugin_name, route = {id = route13.id}, config = get_plugin_config()})
+      local route15 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
+      bp.plugins:insert({name = plugin_name, route = {id = route15.id}, config = get_plugin_config()})
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route13.id},
+        route = {id = route15.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
 
@@ -159,6 +172,7 @@ for _, strategy in helpers.each_strategy() do
       local host_short_ttl = is_jwt and 'short-ttl.oauth2-jwt.com' or 'short-ttl.oauth2.com'
       local host_introspected = is_jwt and 'introspected.oauth2-jwt.com' or 'oauth2.com'
       local host_hidden = is_jwt and 'hidden.oauth2-jwt.com' or 'hidden.oauth2.com'
+      local host_discovery_disabled = is_jwt and 'discovery-disabled.oauth2-jwt.com' or 'discovery-disabled.oauth2.com'
 
       describe('when no access token is given', function()
         it('respond with 401', function()
@@ -183,6 +197,20 @@ for _, strategy in helpers.each_strategy() do
         it('respond with 401', function()
           local token = fetch_token(is_jwt)
           local r = proxy_client:get('/request', {headers = {['Host'] = host_alias, ['Authorization'] = 'bearer ' .. token}})
+          assert.response(r).has.status(401)
+          local v = assert.response(r).has.header('www-authenticate')
+          assert.equal(1, v:find('Bearer realm="service"'), v)
+          assert.is_not_nil(v:find('error="invalid_token"'), v)
+          assert.is_not_nil(v:find('error_description="invalid issuer"'), v)
+        end)
+      end)
+
+      describe('when ' .. (is_jwt and 'jwt ' or '') ..
+                 'access token valid but issuer invalid due to discovery disabled and wrong issuer', function()
+        it('respond with 401', function()
+          local token = fetch_token(is_jwt, env.oauth2_client_audience_invalid_iss)
+          local r = proxy_client:get('/request',
+                                     {headers = {['Host'] = host_discovery_disabled, ['Authorization'] = 'bearer ' .. token}})
           assert.response(r).has.status(401)
           local v = assert.response(r).has.header('www-authenticate')
           assert.equal(1, v:find('Bearer realm="service"'), v)

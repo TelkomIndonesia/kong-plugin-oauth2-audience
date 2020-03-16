@@ -1,7 +1,7 @@
 local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 
 local ngx = require 'ngx'
--- workaround for https://github.com/Kong/kong/issues/5549.
+-- WARN: workaround for https://github.com/Kong/kong/issues/5549.
 if kong.version_num >= 2000000 and kong.version_num <= 2000002 then
   local ffi = require('ffi')
   ffi.cdef [[
@@ -179,7 +179,7 @@ local function inquire(conf, access_token)
   local token_md
   token_md, err = oidc.jwt_verify(access_token, opts)
   local invalid_jwt = err and err:find('invalid jwt', 1, true) == 1
-  local need_introspect_jwt = (not err and conf.jwt_introspection)
+  local need_introspect_jwt = conf.jwt_introspection and (not conf.oidc_conf_discovery or not err) -- assume config error when oidc_conf_discovery is false
   if not (invalid_jwt or need_introspect_jwt) then
     local desc = err and 'failed to verify jwt: ' .. (type(err) == 'string' and err or 'unexpected error') -- err could be nil
     return token_md, err and error.new(errcode.INVALID_TOKEN, desc)
