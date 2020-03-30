@@ -1,8 +1,10 @@
 # Kong Plugin OAuth2 Audience
 
-Oauth2 authentication using external oauth2 server which able to associate external oauth2 client with kong's consumer by using audience claim.
+Oauth2 authentication using external oauth2 server which is able to associate external oauth2 client with kong's consumer by using audience claim.
 
-## Change the plugin name or version
+## Development
+
+### Change the plugin name or version
 
 To change the current plugin name or version, use the rename.sh script.
 
@@ -23,13 +25,25 @@ docker run \
     -c "chmod +x ./rename.sh && ./rename.sh oauth2-audience <new_plugin_name> [<new_plugin_version>]"
 ```
 
-## Test
+### Build
+
+```bash
+docker-compose build
+```
+
+### Run
+
+```bash
+docker-compose up kong
+```
+
+### Test
 
 ```bash
 docker-compose up busted
 ```
 
-## Debugging via zerobrane
+### Debugging via zerobrane
 
 *Assuming you mount **./volumes/kong/usr/local/share/lua/5.1** into **$KONG_LUA_PATH/$KONG_LUA_VERSION** container path*
 
@@ -39,10 +53,3 @@ docker-compose up busted
 
 1. Invoke the mockbin API
 
-## Testing with busted
-
-1. to start your plugin test after completing the step from [Preparation](#preparation), run:
-
-    ```bash
-    docker-compose up kong_busted
-    ```
