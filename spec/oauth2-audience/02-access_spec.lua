@@ -23,10 +23,12 @@ local function split(inputstr, sep)
 end
 
 local pre_auth_simulation = [[
-  local consumer = {id = "%s"}
+  local consumer = kong.client.load_consumer("%s")
   local credential = {id = "%s"}
   kong.client.authenticate(consumer, credential)
   kong.service.request.set_header("x-consumer-id", consumer.id)
+  kong.service.request.set_header("x-consumer-custom-id", consumer.custom_id)
+  kong.service.request.set_header("x-consumer-username", consumer.username)
 ]]
 
 local token_locations = {'authorization', 'query', 'body'}
@@ -88,38 +90,53 @@ local function assert_upstream_credential(res, token, location)
   return assert.equal('bearer ' .. token, h)
 end
 
+local default_auth_headers_name = {
+  consumer_id = "X-Consumer-ID",
+  consumer_custom_id = "X-Consumer-Custom-ID",
+  consumer_username = "X-Consumer-Username",
+  credential_id = "X-Authenticated-Audience"
+}
 local default_claim_header_map = {iss = 'x-oauth2-issuer', client_id = 'x-oauth2-client', sub = 'x-oauth2-subject'}
-local function assert_upstream_headers(res, consumer, audience, claim, header_map)
+local function assert_upstream_headers(res, consumer, audience, claim, auth_header_name, header_map)
   local h
-  if consumer then
-    h = assert.request(res).has.header('x-consumer-id')
+  local body = cjson.decode(assert.res_status(200, res))
+
+  auth_header_name = auth_header_name or default_auth_headers_name
+  if consumer and auth_header_name.consumer_id ~= ':' then
+    h = assert.request(res).has.header(auth_header_name.consumer_id)
     assert.equal(consumer.id, h)
   else
-    local body = cjson.decode(assert.res_status(200, res))
-    assert.is_nil(body.headers['x-consumer-id'])
+    assert.is_nil(body.headers[auth_header_name.consumer_id])
   end
 
-  if audience then
-    h = assert.request(res).has.header('x-authenticated-audience')
+  if consumer and auth_header_name.consumer_custom_id ~= ':' then
+    h = assert.request(res).has.header(auth_header_name.consumer_custom_id)
+    assert.equal(consumer.custom_id, h)
+  else
+    assert.is_nil(body.headers[auth_header_name.consumer_custom_id])
+  end
+
+  if consumer and auth_header_name.consumer_username ~= ':' then
+    h = assert.request(res).has.header(auth_header_name.consumer_username)
+    assert.equal(consumer.username, h)
+  else
+    assert.is_nil(body.headers[auth_header_name.consumer_username])
+  end
+
+  if audience and auth_header_name.credential_id ~= ':' then
+    h = assert.request(res).has.header(auth_header_name.credential_id)
     assert.equal(audience, h)
   else
-    local body = cjson.decode(assert.res_status(200, res))
-    assert.is_nil(body.headers['x-authenticated-audience'])
+    assert.is_nil(body.headers[auth_header_name.credential_id])
   end
 
   header_map = header_map or default_claim_header_map
-  if not audience then
-    local body = cjson.decode(assert.res_status(200, res))
-    for _, header in pairs(header_map) do
-      assert.is_nil(body.headers[header])
-    end
-    return
-  end
-
   for claim_name, header in pairs(header_map) do
-    if claim[claim_name] then
+    if claim and claim[claim_name] then
       h = assert.request(res).has.header(header)
       assert.same(claim[claim_name], h)
+    else
+      assert.is_nil(body.headers[header])
     end
   end
 end
@@ -128,18 +145,19 @@ for _, strategy in helpers.each_strategy() do
   describe('Plugin: ' .. plugin_name .. ' (Access) [#' .. strategy .. ']', function()
     local proxy_client
     local consumer, credential, anonymous
+    local no_auth_header = {consumer_id = ':', consumer_custom_id = ':', consumer_username = ':', credential_id = ':'}
     local custom_claim_header_map = {
       iss = 'x-issuer',
       client_id = 'x-client',
       sub = 'x-subject',
       scope = 'x-scope',
-      scp = 'x-scope'
+      scp = 'x-scp'
     }
 
     setup(function()
       local bp, db = helpers.get_db_utils(strategy, nil, {plugin_name})
 
-      consumer = db.consumers:insert({username = "client"})
+      consumer = db.consumers:insert({username = "client", custom_id = "d8090ef93aa0d704be21e1b2f3a7045b"})
       credential = db[schema_name]:insert(get_audience_credential(false, {consumer = {id = consumer.id}}))
       db[schema_name]:insert(get_audience_credential(true, {consumer = {id = consumer.id}}))
       db[schema_name]:insert({
@@ -155,7 +173,7 @@ for _, strategy in helpers.each_strategy() do
         client_id = 'other-client'
       })
 
-      anonymous = db.consumers:insert({username = "anonymous"})
+      anonymous = db.consumers:insert({username = "anonymous", custom_id = "cbd25cde0d92f13ad2c42875ae0413ef"})
 
       local route = bp.routes:insert({hosts = {'oauth2.com', 'introspected.oauth2.com'}})
       bp.plugins:insert({name = plugin_name, route = {id = route.id}, config = get_plugin_config()})
@@ -227,48 +245,60 @@ for _, strategy in helpers.each_strategy() do
         config = get_plugin_config(true, {issuer = "https://invalid.tld", oidc_conf_discovery = false, jwt_introspection = true})
       })
 
-      local route12 = bp.routes:insert({hosts = {'custom-map.oauth2.com'}})
+      local route12 = bp.routes:insert({hosts = {'no-auth-header.oauth2.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route12.id},
-        config = get_plugin_config(false, {claim_header_map = custom_claim_header_map})
+        config = get_plugin_config(false, {auth_headers_name = no_auth_header})
       })
-      local route13 = bp.routes:insert({hosts = {'custom-map.oauth2-jwt.com'}})
+      local route13 = bp.routes:insert({hosts = {'no-auth-header.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route13.id},
-        config = get_plugin_config(true, {claim_header_map = custom_claim_header_map})
+        config = get_plugin_config(true, {auth_headers_name = no_auth_header})
       })
-
-      local route14 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
+      local route14 = bp.routes:insert({hosts = {'custom-map.oauth2.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route14.id},
-        config = get_plugin_config(true, {jwt_introspection = true})
+        config = get_plugin_config(false, {claim_header_map = custom_claim_header_map})
       })
-
-      local route15 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      local route15 = bp.routes:insert({hosts = {'custom-map.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route15.id},
-        config = get_plugin_config(false, {anonymous = anonymous.id})
+        config = get_plugin_config(true, {claim_header_map = custom_claim_header_map})
       })
-      local route16 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+
+      local route16 = bp.routes:insert({hosts = {'introspected.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route16.id},
+        config = get_plugin_config(true, {jwt_introspection = true})
+      })
+
+      local route17 = bp.routes:insert({hosts = {'anonymous.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route17.id},
+        config = get_plugin_config(false, {anonymous = anonymous.id})
+      })
+      local route18 = bp.routes:insert({hosts = {'authenticated.oauth2.com'}})
+      bp.plugins:insert({
+        name = plugin_name,
+        route = {id = route18.id},
         config = get_plugin_config(false, {anonymous = consumer.id})
       })
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route16.id},
+        route = {id = route18.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
-      local route17 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
-      bp.plugins:insert({name = plugin_name, route = {id = route17.id}, config = get_plugin_config()})
+      local route19 = bp.routes:insert({hosts = {'multiple-auth.oauth2.com'}})
+      bp.plugins:insert({name = plugin_name, route = {id = route19.id}, config = get_plugin_config()})
       bp.plugins:insert({
         name = 'pre-function',
-        route = {id = route17.id},
+        route = {id = route19.id},
         config = {functions = {string.format(pre_auth_simulation, consumer.id, credential.id)}}
       })
 
@@ -297,6 +327,7 @@ for _, strategy in helpers.each_strategy() do
       local host_introspected = is_jwt and 'introspected.oauth2-jwt.com' or 'introspected.oauth2.com'
       local host_hidden = is_jwt and 'hidden.oauth2-jwt.com' or 'hidden.oauth2.com'
       local host_discovery_disabled = is_jwt and 'discovery-disabled.oauth2-jwt.com' or 'discovery-disabled.oauth2.com'
+      local host_no_auth_header = is_jwt and 'no-auth-header.oauth2-jwt.com' or 'no-auth-header.oauth2.com'
       local host_custom_map = is_jwt and 'custom-map.oauth2-jwt.com' or 'custom-map.oauth2.com'
 
       describe('when no access token is given', function()
@@ -430,6 +461,24 @@ for _, strategy in helpers.each_strategy() do
         end)
       end)
 
+      describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match route with no auth header name', function()
+        it('respond with 200', function()
+          local token = fetch_token(is_jwt)
+          local req = {headers = {['Host'] = host_no_auth_header}}
+          local r = proxy_client:get('/request', tokenize(req, token))
+          assert.response(r).has.status(200)
+          assert_upstream_credential(r, token)
+
+          local aud = is_jwt and env.oauth2_jwt_client_audience or env.oauth2_client_audience
+          local claim = {
+            iss = is_jwt and env.idp_jwt_issuer or env.idp_opaque_issuer,
+            client_id = env.oauth2_client_id,
+            sub = env.oauth2_client_id
+          }
+          assert_upstream_headers(r, consumer, aud, claim, no_auth_header)
+        end)
+      end)
+
       describe('when ' .. (is_jwt and 'jwt ' or '') .. 'access token match route with custom claim header map', function()
         it('respond with 200', function()
           local token = fetch_token(is_jwt)
@@ -446,7 +495,7 @@ for _, strategy in helpers.each_strategy() do
             scope = (not is_jwt) and env.oauth2_client_scope,
             scp = is_jwt and split(env.oauth2_client_scope, ' ')
           }
-          assert_upstream_headers(r, consumer, aud, claim, custom_claim_header_map)
+          assert_upstream_headers(r, consumer, aud, claim, nil, custom_claim_header_map)
         end)
       end)
 

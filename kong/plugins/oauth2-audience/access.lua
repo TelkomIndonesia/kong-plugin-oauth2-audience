@@ -39,11 +39,6 @@ local OIDC_CONFIG_PATH = '.well-known/openid-configuration'
 local ACCESS_TOKEN = 'access_token'
 local TAB_EMPTY = {}
 local TAB_ADDR_IDX = string.find(tostring(TAB_EMPTY), ' ') + 1
-local HEADER_CONSUMER_ID = kong_constants.HEADERS.CONSUMER_ID
-local HEADER_CONSUMER_CUSTOM_ID = kong_constants.HEADERS.CONSUMER_CUSTOM_ID
-local HEADER_CONSUMER_USERNAME = kong_constants.HEADERS.CONSUMER_USERNAME
-local HEADER_ANONYMOUS = kong_constants.HEADERS.ANONYMOUS
-local HEADER_CREDENTIAL = 'x-authenticated-audience'
 
 local function get_access_token_from_header(conf)
   local value = get_req_header(conf.auth_header_name)
@@ -294,44 +289,58 @@ local function get_consumer(credential)
 end
 
 local function set_upstream_headers(conf, consumer, credential, token_metadata)
-  if consumer and consumer.id then
-    set_req_header(HEADER_CONSUMER_ID, consumer.id)
-  else
-    clear_req_header(HEADER_CONSUMER_ID)
-  end
+  local header_consumer_id = conf.auth_headers_name.consumer_id
+  local header_consumer_custom_id = conf.auth_headers_name.consumer_custom_id
+  local header_consumer_username = conf.auth_headers_name.consumer_username
+  local header_credential_id = conf.auth_headers_name.credential_id
+  local header_anonymous = conf.auth_headers_name.anonymous
 
-  if consumer and consumer.custom_id then
-    set_req_header(HEADER_CONSUMER_CUSTOM_ID, consumer.custom_id)
-  else
-    clear_req_header(HEADER_CONSUMER_CUSTOM_ID)
-  end
-
-  if consumer and consumer.username then
-    set_req_header(HEADER_CONSUMER_USERNAME, consumer.username)
-  else
-    clear_req_header(HEADER_CONSUMER_USERNAME)
-  end
-
-  if not credential then
-    set_req_header(HEADER_ANONYMOUS, true)
-    clear_req_header(HEADER_CREDENTIAL)
-    for _, h in pairs(conf.claim_header_map) do
-      clear_req_header(h)
+  if header_consumer_id ~= ":" then
+    if consumer and consumer.id then
+      set_req_header(header_consumer_id, consumer.id)
+    else
+      clear_req_header(header_consumer_id)
     end
-    return
   end
 
-  clear_req_header(HEADER_ANONYMOUS)
-  if credential.audience then
-    set_req_header(HEADER_CREDENTIAL, credential.audience)
-  else
-    clear_req_header(HEADER_CREDENTIAL)
+  if header_consumer_custom_id ~= ":" then
+    if consumer and consumer.custom_id then
+      set_req_header(header_consumer_custom_id, consumer.custom_id)
+    else
+      clear_req_header(header_consumer_custom_id)
+    end
+  end
+
+  if header_consumer_username ~= ":" then
+    if consumer and consumer.username then
+      set_req_header(header_consumer_username, consumer.username)
+    else
+      clear_req_header(header_consumer_username)
+    end
+  end
+
+  if header_credential_id ~= ":" then
+    if credential and credential.audience then
+      set_req_header(header_credential_id, credential.audience)
+    else
+      clear_req_header(header_credential_id)
+    end
+  end
+
+  if header_anonymous ~= ":" then
+    if not credential then
+      set_req_header(header_anonymous, true)
+    else
+      clear_req_header(header_anonymous)
+    end
   end
 
   for n, h in pairs(conf.claim_header_map) do
-    local v = token_metadata[n]
+    local v = token_metadata and token_metadata[n]
     if v then
       set_req_headers({[h] = v})
+    else
+      clear_req_header(h)
     end
   end
 end
