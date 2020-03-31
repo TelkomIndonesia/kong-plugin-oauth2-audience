@@ -289,11 +289,11 @@ local function get_consumer(credential)
 end
 
 local function set_upstream_headers(conf, consumer, credential, token_metadata)
-  local header_consumer_id = conf.auth_headers_name.consumer_id
-  local header_consumer_custom_id = conf.auth_headers_name.consumer_custom_id
-  local header_consumer_username = conf.auth_headers_name.consumer_username
-  local header_credential_id = conf.auth_headers_name.credential_id
-  local header_anonymous = conf.auth_headers_name.anonymous
+  local header_consumer_id = conf.auth_header_map.consumer_id
+  local header_consumer_custom_id = conf.auth_header_map.consumer_custom_id
+  local header_consumer_username = conf.auth_header_map.consumer_username
+  local header_credential = conf.auth_header_map.credential
+  local header_anonymous = conf.auth_header_map.anonymous
 
   if header_consumer_id ~= ":" then
     if consumer and consumer.id then
@@ -319,11 +319,11 @@ local function set_upstream_headers(conf, consumer, credential, token_metadata)
     end
   end
 
-  if header_credential_id ~= ":" then
+  if header_credential ~= ":" then
     if credential and credential.audience then
-      set_req_header(header_credential_id, credential.audience)
+      set_req_header(header_credential, credential.audience)
     else
-      clear_req_header(header_credential_id)
+      clear_req_header(header_credential)
     end
   end
 

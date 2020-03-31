@@ -94,7 +94,7 @@ local default_auth_headers_name = {
   consumer_id = "X-Consumer-ID",
   consumer_custom_id = "X-Consumer-Custom-ID",
   consumer_username = "X-Consumer-Username",
-  credential_id = "X-Authenticated-Audience"
+  credential = "X-Authenticated-Audience"
 }
 local default_claim_header_map = {iss = 'x-oauth2-issuer', client_id = 'x-oauth2-client', sub = 'x-oauth2-subject'}
 local function assert_upstream_headers(res, consumer, audience, claim, auth_header_name, header_map)
@@ -123,11 +123,11 @@ local function assert_upstream_headers(res, consumer, audience, claim, auth_head
     assert.is_nil(body.headers[auth_header_name.consumer_username])
   end
 
-  if audience and auth_header_name.credential_id ~= ':' then
-    h = assert.request(res).has.header(auth_header_name.credential_id)
+  if audience and auth_header_name.credential ~= ':' then
+    h = assert.request(res).has.header(auth_header_name.credential)
     assert.equal(audience, h)
   else
-    assert.is_nil(body.headers[auth_header_name.credential_id])
+    assert.is_nil(body.headers[auth_header_name.credential])
   end
 
   header_map = header_map or default_claim_header_map
@@ -145,7 +145,7 @@ for _, strategy in helpers.each_strategy() do
   describe('Plugin: ' .. plugin_name .. ' (Access) [#' .. strategy .. ']', function()
     local proxy_client
     local consumer, credential, anonymous
-    local no_auth_header = {consumer_id = ':', consumer_custom_id = ':', consumer_username = ':', credential_id = ':'}
+    local no_auth_header = {consumer_id = ':', consumer_custom_id = ':', consumer_username = ':', credential = ':'}
     local custom_claim_header_map = {
       iss = 'x-issuer',
       client_id = 'x-client',
@@ -249,13 +249,13 @@ for _, strategy in helpers.each_strategy() do
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route12.id},
-        config = get_plugin_config(false, {auth_headers_name = no_auth_header})
+        config = get_plugin_config(false, {auth_header_map = no_auth_header})
       })
       local route13 = bp.routes:insert({hosts = {'no-auth-header.oauth2-jwt.com'}})
       bp.plugins:insert({
         name = plugin_name,
         route = {id = route13.id},
-        config = get_plugin_config(true, {auth_headers_name = no_auth_header})
+        config = get_plugin_config(true, {auth_header_map = no_auth_header})
       })
       local route14 = bp.routes:insert({hosts = {'custom-map.oauth2.com'}})
       bp.plugins:insert({

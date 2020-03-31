@@ -12,11 +12,12 @@ local HEADER_CONSUMER_ID = kong_constants.HEADERS.CONSUMER_ID
 local HEADER_CONSUMER_CUSTOM_ID = kong_constants.HEADERS.CONSUMER_CUSTOM_ID
 local HEADER_CONSUMER_USERNAME = kong_constants.HEADERS.CONSUMER_USERNAME
 local HEADER_ANONYMOUS = kong_constants.HEADERS.ANONYMOUS
-local HEADER_CREDENTIAL_ID = 'x-authenticated-audience'
+local HEADER_CREDENTIAL = 'x-authenticated-audience'
+local NO_HEADER = ':'
 
 local function validator_optional_header(name)
-  if name == ":" then
-    return ":"
+  if name == NO_HEADER then
+    return name
   end
   if re_match(name, "^[a-zA-Z0-9-_]+$", "jo") then
     return name
@@ -24,12 +25,12 @@ local function validator_optional_header(name)
   return nil, "bad header name '" .. name .. "', allowed characters are A-Z, a-z, 0-9, '_', and '-'"
 end
 
-local function validator_claim_header_map(map)
+local function validator_header_names(map)
   local values = {}
   for _, v in pairs(map) do
     local count = (values[v] or 0) + 1
-    if count > 1 then
-      return nil, "header name '" .. v .. "' is used to map more than one claim"
+    if count > 1 and v ~= NO_HEADER then
+      return nil, "header name '" .. v .. "' is used more than once"
     end
     values[v] = count
   end
@@ -81,7 +82,7 @@ return {
           {introspection_cache_max_ttl = {type = 'number', default = 900}},
 
           {
-            auth_headers_name = {
+            auth_header_map = {
               type = 'record',
               fields = {
                 {consumer_id = {type = 'string', default = HEADER_CONSUMER_ID, custom_validator = validator_optional_header}},
@@ -99,15 +100,10 @@ return {
                     custom_validator = validator_optional_header
                   }
                 },
-                {
-                  credential_id = {
-                    type = 'string',
-                    default = HEADER_CREDENTIAL_ID,
-                    custom_validator = validator_optional_header
-                  }
-                },
+                {credential = {type = 'string', default = HEADER_CREDENTIAL, custom_validator = validator_optional_header}},
                 {anonymous = {type = 'string', default = HEADER_ANONYMOUS, custom_validator = validator_optional_header}}
-              }
+              },
+              custom_validator = validator_header_names
             }
           },
           {
@@ -116,7 +112,7 @@ return {
               keys = {type = 'string'},
               values = typedefs.header_name,
               default = CLAIM_HEADER_MAP,
-              custom_validator = validator_claim_header_map
+              custom_validator = validator_header_names
             }
           }
         }
