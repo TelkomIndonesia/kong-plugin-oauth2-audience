@@ -52,4 +52,3 @@ docker-compose up busted
 1. Click "Project" > "Start Debugger Server"
 
 1. Invoke the mockbin API
-
