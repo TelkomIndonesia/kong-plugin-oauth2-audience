@@ -156,7 +156,7 @@ steps:
       SPEC_KONG_CASSANDRA_REPL_STRATEGY: NetworkTopologyStrategy
       SPEC_KONG_CASSANDRA_LOCAL_DATACENTER: DC1
       SPEC_KONG_LOG_LEVEL: info
-      SPEC_KONG_DNS_RESOLVER: ""
+      SPEC_KONG_DNS_RESOLVER: " "
       SPEC_KONG_PROXY_ACCESS_LOG: /proc/1/fd/1
       SPEC_KONG_PROXY_ERROR_LOG: /proc/1/fd/2
       SPEC_KONG_ADMIN_ACCESS_LOG: /proc/1/fd/1
@@ -190,3 +190,8 @@ steps:
       - ln -s $$DRONE_WORKSPACE/spec/oauth2-audience /usr/local/src/kong/spec/oauth2-audience
       - luarocks make
       - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
+---
+kind: signature
+hmac: 212cbf3b9c090b40bb822470f2aebc0f18cc853962b08d12d58e15b2399cc9ab
+
+...
