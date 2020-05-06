@@ -23,7 +23,8 @@ description = {
 }
 
 dependencies = {
-    "lua-resty-openidc >= 1.7.2-1"
+    "lua-resty-openidc == 1.7.2-1",
+    "lua-resty-jwt == 0.2.2-0"
 }
 
 build = {

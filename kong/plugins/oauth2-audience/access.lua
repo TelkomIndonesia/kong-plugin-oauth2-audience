@@ -1,23 +1,7 @@
 local plugin_name = ({...})[1]:match('^kong%.plugins%.([^%.]+)')
 
 local ngx = require 'ngx'
--- WARN: workaround for https://github.com/Kong/kong/issues/5549.
-if kong.version_num >= 2000000 and kong.version_num <= 2000002 then
-  local ffi = require('ffi')
-  ffi.cdef [[
-    struct evp_md_ctx_st
-        {
-        const EVP_MD *digest;
-        ENGINE *engine;
-        unsigned long flags;
-        void *md_data;
-        EVP_PKEY_CTX *pctx;
-        int (*update)(EVP_MD_CTX *ctx,const void *data,size_t count);
-        };
-  ]]
-end
 local oidc = require 'resty.openidc'
-local kong_constants = require "kong.constants"
 local error = require('kong.plugins.' .. plugin_name .. '.error')
 
 -- redeclaration
