@@ -1,23 +1,43 @@
 ---
+kind: secret
+name: luarocks_url
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: luarocks_url
+---
+kind: secret
+name: luarocks_username
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: luarocks_username
+---
+kind: secret
+name: luarocks_password
+get:
+  path: drone/${DRONE_REPO_NAMESPACE}
+  name: luarocks_password
+
+---
 kind: pipeline
 name: default
 
-services:
+steps:
   - name: postgres
     image: postgres:10.1-alpine
+    detach: true 
     environment:
       POSTGRES_DB: kong
       POSTGRES_USER: kong
-
+  
   - name: cassandra
     image: cassandra:3.11
+    detach: true 
     environment:
       CASSANDRA_CLUSTER_NAME: kong
       CASSANDRA_DC: DC1
       CASSANDRA_RACK: RACK1
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
-
-steps:
+  
   - name: wait postgres
     image: postgres:10.1-alpine
     commands:
@@ -190,8 +210,37 @@ steps:
       - ln -s $$DRONE_WORKSPACE/spec/oauth2-audience /usr/local/src/kong/spec/oauth2-audience
       - luarocks make
       - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
+  
+  - name: pack rock
+    image: kong:2.0.1-alpine
+    user: 0
+    commands: 
+      - luarocks make --pack-binary-rock *.rockspec
+      - mkdir -p .rock/${DRONE_REPO_NAMESPACE}
+      - mv *.rock .rock/${DRONE_REPO_NAMESPACE}
+    when:
+      branch:
+        - master
+  
+  - name: publish rock
+    image: rucciva/drone-webdav-plugin:0.0.3
+    pull: always
+    settings:
+      url: 
+        from_secret: luarocks_url 
+      username: 
+        from_secret: luarocks_username 
+      password: 
+        from_secret: luarocks_password
+      remote_path: /
+      sources:
+        - .rock/${DRONE_REPO_NAMESPACE}
+    when:
+      branch:
+        - master
+  
 ---
 kind: signature
-hmac: 212cbf3b9c090b40bb822470f2aebc0f18cc853962b08d12d58e15b2399cc9ab
+hmac: 6cf9e7a67aa900479659b7de09a4b4fad87fcd4adbbc3b00fb9069aa2c1a44d0
 
 ...

@@ -12,7 +12,7 @@ local pluginName = package:match("^kong%-plugin%-(.+)$")  -- "myPlugin"
 supported_platforms = {"linux", "macosx"}
 source = {
   -- these are initially not required to make it work
-  url = "git://github.com/Mashape/kong_plugin",
+  url = "git+https://git.rucciva.one/mainapi/kong-plugin-oauth2-audience",
   tag = "0.2.1"
 }
 
