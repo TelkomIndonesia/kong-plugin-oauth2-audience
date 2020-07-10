@@ -212,15 +212,12 @@ steps:
       - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
   
   - name: pack rock
-    image: kong:2.0.1-alpine
-    user: 0
+    image: rucciva/kong:2.0.1-alpine
     commands: 
+      - luarocks pack *.rockspec
       - luarocks make --pack-binary-rock *.rockspec
       - mkdir -p .rock/${DRONE_REPO_NAMESPACE}
       - mv *.rock .rock/${DRONE_REPO_NAMESPACE}
-    when:
-      branch:
-        - master
   
   - name: publish rock
     image: rucciva/drone-webdav-plugin:0.0.3
@@ -235,12 +232,9 @@ steps:
       remote_path: /
       sources:
         - .rock/${DRONE_REPO_NAMESPACE}
-    when:
-      branch:
-        - master
   
 ---
 kind: signature
-hmac: 6cf9e7a67aa900479659b7de09a4b4fad87fcd4adbbc3b00fb9069aa2c1a44d0
+hmac: a5bdd418b83535b8c2287aa66367d9fffd1139db28de13752c41bd198ed64502
 
 ...
