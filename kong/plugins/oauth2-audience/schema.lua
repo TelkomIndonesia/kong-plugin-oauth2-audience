@@ -53,7 +53,7 @@ return {
 
           {ssl_verify = {type = 'boolean', default = true}},
 
-          {issuer = typedefs.url({required = true})},
+          {issuer = {type = 'string', required = true, match = '%S'}},
           {oidc_conf_discovery = {type = 'boolean', default = true}},
           {required_scope = {type = 'array', elements = {type = 'string'}, default = {}}},
           {required_audiences = {type = 'array', elements = {type = 'string'}, default = {}}},
