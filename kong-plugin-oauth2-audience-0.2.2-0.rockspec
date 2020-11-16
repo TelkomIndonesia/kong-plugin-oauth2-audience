@@ -1,11 +1,11 @@
 package = "kong-plugin-oauth2-audience"
-version = "0.2.1-0"
+version = "0.2.2-0"
 local pluginName = package:match("^kong%-plugin%-(.+)$") 
 
 supported_platforms = {"linux", "macosx"}
 source = {
   url = "git+https://git.rucciva.one/mainapi/kong-plugin-oauth2-audience",
-  tag = "0.2.1"
+  tag = "0.2.2"
 }
 
 description = {
