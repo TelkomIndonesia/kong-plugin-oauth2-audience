@@ -1,25 +1,7 @@
 ---
-kind: secret
-name: luarocks_url
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: luarocks_url
----
-kind: secret
-name: luarocks_username
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: luarocks_username
----
-kind: secret
-name: luarocks_password
-get:
-  path: drone/${DRONE_REPO_NAMESPACE}
-  name: luarocks_password
-
----
 kind: pipeline
 name: default
+type: docker
 
 steps:
   - name: postgres
@@ -167,7 +149,7 @@ steps:
     
   - name: test
     image: rucciva/kong-dev-onbuild:2.0.1
-    pull: true
+    pull: "always"
     environment:
       SPEC_KONG_PG_HOST: postgres
       SPEC_KONG_PG_DATABASE: kong
@@ -211,36 +193,14 @@ steps:
       - luarocks make
       - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
 
-  - name: pack rock
-    image: rucciva/kong:2.0.1-alpine
-    commands: 
-      - luarocks pack *.rockspec
-      - luarocks make --pack-binary-rock *.rockspec
-      - mkdir -p .rock/${DRONE_REPO_NAMESPACE}
-      - mv *.rock .rock/${DRONE_REPO_NAMESPACE}
-    when:
-      branch:
-        - master
-  
   - name: publish rock
-    image: rucciva/drone-webdav-plugin:0.0.3
-    pull: always
-    settings:
-      url: 
-        from_secret: luarocks_url 
-      username: 
-        from_secret: luarocks_username 
-      password: 
-        from_secret: luarocks_password
-      remote_path: /
-      sources:
-        - .rock/${DRONE_REPO_NAMESPACE}
+    image: rucciva/kong:2.0.1-alpine
+    environment:
+      LUAROCKS_API_KEY:
+          from_secret: LUAROCKS_API_KEY
+    commands: 
+      - luarocks upload *.rockspec --api-key="$LUAROCKS_API_KEY"
     when:
-      branch:
-        - master
-  
----
-kind: signature
-hmac: 0eaa54eb440ae10132bb72591e0475e77e41f43e670d730aa468e7b424752ae8
-
+      event: 
+        - tag
 ...
