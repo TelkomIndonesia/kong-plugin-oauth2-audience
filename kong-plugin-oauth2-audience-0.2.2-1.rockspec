@@ -1,17 +1,16 @@
 package = "kong-plugin-oauth2-audience"
-version = "0.2.2-0"
+version = "0.2.2-1"
 local pluginName = package:match("^kong%-plugin%-(.+)$") 
 
 supported_platforms = {"linux", "macosx"}
 source = {
-  url = "git+https://git.rucciva.one/mainapi/kong-plugin-oauth2-audience",
-  tag = "0.2.2"
+  url = "git+https://github.com/TelkomIndonesia/kong-plugin-oauth2-audience",
+  tag = "0.2.2+open"
 }
 
 description = {
-  summary = "Kong is a scalable and customizable API Management Layer built on top of Nginx.",
-  homepage = "http://getkong.org",
-  license = "MIT"
+  summary = "Kong authentication plugin to integrate with external OAuth2 / OpenID Connect Provider ",
+  homepage = "https://luarocks.org/modules/telkomindonesia",
 }
 
 dependencies = {
