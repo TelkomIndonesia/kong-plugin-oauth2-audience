@@ -1,6 +1,8 @@
 # Kong Plugin OAuth2 Audience
 
-Oauth2 authentication using external oauth2 server which is able to associate external oauth2 client with kong's consumer by using audience claim.
+[![Build Status](https://cloud.drone.io/api/badges/TelkomIndonesia/kong-plugin-oauth2-audience/status.svg?branch=master)](https://cloud.drone.io/TelkomIndonesia/kong-plugin-oauth2-audience)
+
+Authenticate Kong consumer using a third-party OAuth 2.0 / OpenID Connect provider.
 
 ## Development
 
