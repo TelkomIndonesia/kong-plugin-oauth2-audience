@@ -11,7 +11,7 @@ Authenticate Kong consumer using a third-party OAuth 2.0 / OpenID Connect provid
 To change the current plugin name or version, use the rename.sh script.
 
 ```bash
-chmod +x ./rename.sh && ./rename.sh <current_plugin_name> <new_plugin_name> [<new_plugin_version>]
+chmod +x ./rename.sh && ./rename.sh oauth2-audience <new_plugin_name> [<new_plugin_version>]
 ```
 
 If you are not on linux or somehow not able to run this script, utilize docker and run this script:
