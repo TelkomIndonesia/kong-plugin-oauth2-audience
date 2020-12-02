@@ -74,7 +74,7 @@ return {
           {introspection_auth_method = {type = 'string', default = AUTH_METHOD[1], one_of = AUTH_METHOD}},
           {introspection_client_id = {type = 'string'}},
           {introspection_client_secret = {type = 'string'}},
-          {introspection_client_rsa_private_key = typedefs.certificate},
+          {introspection_client_rsa_private_key = typedefs.key},
           {introspection_client_rsa_private_key_id = {type = 'string'}},
           {introspection_param_name_token = {type = 'string', default = 'token'}},
           {introspection_params = {type = 'map', keys = {type = 'string'}, values = {type = 'string'}}},
