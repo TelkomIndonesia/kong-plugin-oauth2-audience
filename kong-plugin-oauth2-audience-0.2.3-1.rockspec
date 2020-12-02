@@ -1,11 +1,11 @@
 package = "kong-plugin-oauth2-audience"
-version = "0.2.2-1"
+version = "0.2.3-1"
 local pluginName = package:match("^kong%-plugin%-(.+)$") 
 
 supported_platforms = {"linux", "macosx"}
 source = {
   url = "git+https://github.com/TelkomIndonesia/kong-plugin-oauth2-audience",
-  tag = "0.2.2+open"
+  tag = "0.2.3"
 }
 
 description = {
