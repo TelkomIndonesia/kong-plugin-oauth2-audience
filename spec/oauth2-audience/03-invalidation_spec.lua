@@ -84,7 +84,9 @@ for _, strategy in helpers.each_strategy() do
       -- delete credential entity
       res = assert(admin_client:send{
         method = "DELETE",
-        path = string.format("/consumers/%s/%s/%s", consumer.username, api_name, credential.id)
+        path = string.format("/consumers/%s/%s/%s", consumer.username, api_name, credential.audience) 
+        -- WARN: this is weird. if we use credential's id as follow, the cache somehow persist.
+        -- path = string.format("/consumers/%s/%s/%s", consumer.username, api_name, credential.id) 
       })
       assert.res_status(204, res)
 
