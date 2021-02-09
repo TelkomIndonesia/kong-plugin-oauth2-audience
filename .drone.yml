@@ -35,7 +35,7 @@ steps:
       - until cqlsh cassandra; do sleep 1; done
   
   - name: migrate
-    image: kong:2.1.4-alpine
+    image: kong:2.3.1-alpine
     environment:
       KONG_PG_HOST: postgres
       KONG_PG_DATABASE: kong
@@ -148,7 +148,7 @@ steps:
           curl -sfk -X PUT -H "$$CONTENT_TYPE" "$$url/clients/client" -d "$$CLIENT_JWT"
     
   - name: test
-    image: rucciva/kong-dev-onbuild:2.1.4
+    image: rucciva/kong-dev-onbuild:2.3.1
     pull: "always"
     environment:
       SPEC_KONG_PG_HOST: postgres
@@ -194,7 +194,7 @@ steps:
       - cd /usr/local/src/kong/ && bin/busted -v spec/oauth2-audience
 
   - name: publish rock
-    image: rucciva/kong:2.0.1-alpine
+    image: rucciva/kong-dev-onbuild:2.3.1
     environment:
       LUAROCKS_API_KEY:
           from_secret: LUAROCKS_API_KEY
